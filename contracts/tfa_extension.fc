@@ -1,0 +1,355 @@
+#include "imports/stdlib.fc";
+#include "imports/shared.fc";
+
+const state::idle = 0;
+const state::wait_timeout = 1;
+
+const op::install = 125;
+const op::send_actions = 130;
+const op::authorize_device = 131;
+const op::unauthorize_device = 132;
+const op::recover_access = 133;
+const op::cancel_request = 134;
+
+cell get_wallet_v5_code() asm "<b 2 8 u, 0xe4cf3b2f4c6d6a61ea0f2b5447d266785b26af3637db2deee6bcd1aa826f3412 256 u, b>spec PUSHREF";
+
+const one_ton = 1000000000;
+
+;; storage$_ seqno:uint32 wallet:MsgAddressInt service_pubkey:uint256 seed_pubkey:uint256
+;;                     device_pubkeys:Dict recover_state:RecoverState = Storage;
+
+(int, slice, int, int, cell, int, slice) load_data() inline {
+    var ds = get_data().begin_parse();
+    return (
+        ds~load_uint(32),
+        ds~load_msg_addr(),
+        ds~load_uint(256),
+        ds~load_uint(256),
+        ds~load_dict(),
+        ds~load_uint(1),
+        ds
+    );
+}
+
+() save_state(
+    int seqno,
+    slice wallet,
+    int service_pubkey,
+    int seed_pubkey,
+    cell device_pubkeys,
+    int recover_state_,
+    slice recover_state
+) impure inline {
+    set_data(
+        begin_cell()
+            .store_uint(seqno, 32)
+            .store_slice(wallet)
+            .store_uint(service_pubkey, 256)
+            .store_uint(seed_pubkey, 256)
+            .store_dict(device_pubkeys)
+            .store_uint(recover_state_, 1)
+            .store_slice(recover_state)
+            .end_cell()
+    );
+}
+
+() recv_internal(cell in_msg_full, slice in_msg_body) impure {
+    if (slice_empty?(in_msg_body)) {
+        ;; refill
+        return ();
+    }
+
+    var cs = in_msg_full.begin_parse();
+    cs~load_uint(4); ;; skip flags
+    slice sender = cs~load_msg_addr();
+
+    int op = in_msg_body~load_uint(32);
+
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+
+    if (op == op::install) {
+        throw_unless(35, seqno == 0);
+        throw_unless(36, equal_slices(sender, wallet_addr));
+
+        int new_service_pubkey = in_msg_body~load_uint(256);
+        int new_seed_pubkey = in_msg_body~load_uint(256);
+        cell new_device_pubkeys = in_msg_body~load_dict();
+
+        save_state(
+            1,
+            sender,
+            new_service_pubkey,
+            new_seed_pubkey,
+            new_device_pubkeys,
+            recover_state,
+            rest_state
+        );
+
+        return ();
+    }
+
+;;    if (op == op::cancel_recovery) {
+;;        throw_unless(35, state == state::wait_timeout);
+;;        throw_unless(36, equal_slices(sender, wallet_addr));
+;;
+;;        save_state_idle(
+;;            recovery_id,
+;;            owner_pubkey,
+;;            tp_pubkey,
+;;            wallet_addr,
+;;            timeout
+;;        );
+;;
+;;        return ();
+;;    }
+;;    if (op == op::update_tp_pubkey) {
+;;        throw_unless(38, state == state::idle);
+;;        throw_unless(36, equal_slices(sender, wallet_addr));
+;;
+;;        int new_tp_pubkey = in_msg_body~load_uint(256);
+;;
+;;        save_state_idle(
+;;            recovery_id,
+;;            owner_pubkey,
+;;            new_tp_pubkey,
+;;            wallet_addr,
+;;            timeout
+;;        );
+;;
+;;        return ();
+;;    }
+
+    if (op == op::destruct) {
+        throw_unless(36, equal_slices(sender, wallet_addr));
+
+        ;; It is assumed that the wallet removed this extension by itself, so there is no need to send
+        ;; `delete_ext` message to the wallet.
+        var msg = begin_cell()
+        .store_nonbounce_flags()
+        .store_slice(wallet_addr)
+        .store_coins(0)
+        .store_default_body();
+
+        send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
+        return ();
+    }
+
+    throw(0xffff);
+}
+
+(slice, ()) check_2fa(slice cs, int service_pubkey, cell device_pubkeys, int stored_seqno) impure inline {
+    slice service_signature = cs~load_bits(512);
+
+    slice device_info = cs~load_ref().begin_parse();
+    slice device_signature = device_info~load_bits(512);
+    int device_pubkey_id = device_info~load_uint(32);
+
+    int root_hash = slice_hash(cs);
+
+    throw_unless(32, check_signature(root_hash, service_signature, service_pubkey));
+
+    (slice device_pubkey_slice, int found?) = device_pubkeys.udict_get?(32, device_pubkey_id);
+    int device_pubkey = device_pubkey_slice~load_uint(256);
+    throw_unless(
+        33,
+        check_signature(root_hash, device_signature, device_pubkey)
+    );
+
+    int seqno = cs~load_uint(32);
+    throw_unless(34, seqno == stored_seqno);
+
+    return (cs, ());
+}
+
+(slice, ()) check_2fa_with_seed(slice cs, int service_pubkey, int seed_pubkey, int stored_seqno) impure {
+    slice service_signature = cs~load_bits(512);
+
+    slice seed_info = cs~load_ref().begin_parse();
+    slice seed_signature = seed_info~load_bits(512);
+
+    int root_hash = slice_hash(cs);
+
+    throw_unless(35, check_signature(root_hash, service_signature, service_pubkey));
+    throw_unless(36, check_signature(root_hash, seed_signature, seed_pubkey));
+
+    int seqno = cs~load_uint(32);
+    throw_unless(37, seqno == stored_seqno);
+
+    return (cs, ());
+}
+
+() recv_external(slice in_msg) impure {
+    int op = in_msg~load_uint(32);
+
+    var ds = get_data().begin_parse();
+
+    int seqno = ds~load_uint(32);
+    slice immutable_tail = ds;
+
+    slice wallet_addr = ds~load_msg_addr();
+    int service_pubkey = ds~load_uint(256);
+    int seed_pubkey = ds~load_uint(256);
+    cell device_pubkeys = ds~load_dict();
+    int recover_state = ds~load_uint(1);
+    slice rest_state = ds;
+
+    if (op == op::send_actions) {
+        throw_if(38, recover_state);
+        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+        accept_message();
+
+        set_data(
+            begin_cell()
+                .store_uint(seqno + 1, 32)
+                .store_slice(immutable_tail)
+                .end_cell()
+        );
+        commit();
+
+        cell body = in_msg~load_ref();
+
+        cell msg = begin_cell()
+            .store_nonbounce_flags()
+            .store_slice(wallet_addr)
+            .store_coins(0)
+            .store_ref_body(body)
+            .end_cell();
+
+        send_raw_message(msg, 128);
+
+        return ();
+    }
+
+    if (op == op::authorize_device) {
+        throw_unless(32, recover_state == 0);
+        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+
+        int new_device_pubkey_id = in_msg~load_uint(32);
+        slice new_device_pubkey = in_msg~load_ref().begin_parse();
+
+        (cell new_device_pubkeys, int added?) = device_pubkeys.udict_add?(32, new_device_pubkey_id, new_device_pubkey);
+
+        throw_unless(34, added?);
+
+        accept_message();
+
+        save_state(
+            seqno + 1,
+            wallet_addr,
+            service_pubkey,
+            seed_pubkey,
+            new_device_pubkeys,
+            0,
+            rest_state
+        );
+
+        return ();
+    }
+
+    if (op == op::unauthorize_device) {
+        throw_unless(32, recover_state == 0);
+        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+
+        int device_pubkey_id = in_msg~load_uint(32);
+        (cell new_device_pubkeys, int deleted?) = device_pubkeys.udict_delete?(32, device_pubkey_id);
+
+        throw_unless(34, deleted?);
+
+        accept_message();
+
+        save_state(
+            seqno + 1,
+            wallet_addr,
+            service_pubkey,
+            seed_pubkey,
+            new_device_pubkeys,
+            0,
+            rest_state
+        );
+
+        return ();
+    }
+
+    if (op == op::recover_access) {
+        in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
+
+        int recovery_blocked_until = rest_state~load_uint(64);
+        throw_unless(33, recovery_blocked_until <= now());
+
+        if (recover_state == 0) {
+            accept_message();
+
+            slice new_recovery_state = begin_cell()
+                .store_uint(now() + 60 * 60 * 24 * 3, 64) ;; recovery_blocked_until
+                .store_ref(
+                    begin_cell()
+                        .store_uint(in_msg~load_uint(256), 256) ;; new_device_pubkey
+                        .store_uint(in_msg~load_uint(32), 32) ;; new_device_pubkey_id
+                        .end_cell()
+                )
+                .end_cell()
+                .begin_parse();
+
+            save_state(
+                seqno + 1,
+                wallet_addr,
+                service_pubkey,
+                seed_pubkey,
+                device_pubkeys,
+                1,
+                new_recovery_state
+            );
+        } else {
+            slice added_info = rest_state~load_ref().begin_parse();
+
+            slice new_device_pubkey = added_info~load_bits(256);
+            int new_device_pubkey_id = added_info~load_uint(32);
+
+            throw_unless(35, equal_slices(new_device_pubkey, in_msg~load_bits(256)));
+            throw_unless(36, new_device_pubkey_id == in_msg~load_uint(32));
+
+            accept_message();
+
+            cell new_device_pubkeys = null();
+            new_device_pubkeys = new_device_pubkeys.udict_set(32, new_device_pubkey_id, new_device_pubkey);
+
+            save_state(
+                seqno + 1,
+                wallet_addr,
+                service_pubkey,
+                seed_pubkey,
+                new_device_pubkeys,
+                0,
+                begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+            );
+        }
+
+        return ();
+    }
+
+    if (op == op::cancel_request) {
+        in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
+
+        throw_unless(32, recover_state == 1);
+
+        save_state(
+            seqno + 1,
+            wallet_addr,
+            service_pubkey,
+            seed_pubkey,
+            device_pubkeys,
+            0,
+            begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+        );
+
+        return ();
+    }
+}

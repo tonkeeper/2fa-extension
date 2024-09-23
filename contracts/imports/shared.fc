@@ -1,0 +1,77 @@
+;; Send Mode Flags
+const CARRY_CONTRACT_BALANCE = 128;
+const CARRY_INBOUND_COINS = 64;
+const DESTROY_IF_BALANCE_ZERO = 32;
+const PAY_FEE_SEPARATELY = 1;
+const IGNORE_ACTION_ERRORS = 2;
+
+;; Wallet-related constants
+const wallet::out_action::send_msg = 0x0ec3c86d;
+const wallet::extended_action::add_ext = 0x1c40db9f;
+const wallet::extended_action::delete_ext = 0x5eaef4a4;
+const wallet::extended_action::set_signature_auth = 0x20cbb95a;
+
+;; Extension opcodes
+const op::destruct = 0x64737472;
+
+;; Wallet opcodes
+const op::wallet::request_by_extension = 0x6578746E;
+
+;; Serialize helpers
+builder store_nonbounce_flags(builder b) inline {
+    return b.store_uint(0x10, 6);
+}
+
+builder store_bounce_flags(builder b) inline {
+    return b.store_uint(0x18, 6);
+}
+
+builder store_default_body(builder b) inline {
+    return b.store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1);
+}
+
+builder store_ref_body(builder b, cell body) inline {
+    return b.store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1).store_ref(body);
+}
+
+builder store_add_ext_action(builder b, slice extension_addr, cell next_action) inline {
+    return b.store_uint(1, 1) ;; action_list_extended$1
+        .store_uint(wallet::extended_action::add_ext, 32)
+        .store_slice(extension_addr)
+        .store_ref(next_action);
+}
+
+builder store_delete_ext_action(builder b, slice extension_addr, cell next_action) inline {
+    return b.store_uint(1, 1) ;; action_list_extended$1
+        .store_uint(wallet::extended_action::delete_ext, 32)
+        .store_slice(extension_addr)
+        .store_ref(next_action);
+}
+
+builder store_set_signature_auth(builder b, int allow, cell next_action) inline {
+    return b.store_uint(1, 1) ;; action_list_extended$1
+        .store_uint(wallet::extended_action::set_signature_auth, 32)
+        .store_int(allow, 1)
+        .store_ref(next_action);
+}
+
+cell new_out_action_send_msg(cell prev_action, int mode, cell msg) inline {
+    return begin_cell()
+        .store_ref(prev_action)
+        .store_uint(wallet::out_action::send_msg, 32)
+        .store_uint(mode, 8)
+        .store_ref(msg)
+        .end_cell();
+}
+
+cell new_empty_out_action_list() inline {
+    return begin_cell()
+        .store_uint(0, 1) ;; action_list_basic$0
+        .store_ref(begin_cell().end_cell())
+        .end_cell();
+}
+
+builder store_action_list_basic(builder b, cell action) inline {
+    return b.store_uint(0, 1) ;; action_list_basic$0
+        .store_ref(action);
+}

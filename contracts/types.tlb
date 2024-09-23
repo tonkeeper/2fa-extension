@@ -1,0 +1,1 @@
+storage$_ seqno:uint32 wallet:MsgAddressInt service_pubkey:uint256 device_pubkeys:Dict = Storage;
