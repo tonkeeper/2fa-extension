@@ -150,18 +150,18 @@ const one_ton = 1000000000;
 
     slice device_info = cs~load_ref().begin_parse();
     slice device_signature = device_info~load_bits(512);
-    int device_pubkey_id = device_info~load_uint(32);
+    int device_pubkey_id = device_info.preload_uint(32);
 
     int root_hash = slice_hash(cs);
 
-    throw_unless(32, check_signature(root_hash, service_signature, service_pubkey));
-
     (slice device_pubkey_slice, int found?) = device_pubkeys.udict_get?(32, device_pubkey_id);
-    int device_pubkey = device_pubkey_slice~load_uint(256);
+    int device_pubkey = device_pubkey_slice.preload_uint(256);
     throw_unless(
         33,
         check_signature(root_hash, device_signature, device_pubkey)
     );
+
+    throw_unless(32, check_signature(root_hash, service_signature, service_pubkey));
 
     int seqno = cs~load_uint(32);
     throw_unless(34, seqno == stored_seqno);
@@ -214,7 +214,7 @@ const one_ton = 1000000000;
         );
         commit();
 
-        cell body = in_msg~load_ref();
+        cell body = in_msg.preload_ref();
 
         cell msg = begin_cell()
             .store_nonbounce_flags()
