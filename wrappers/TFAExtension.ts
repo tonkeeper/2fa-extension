@@ -89,6 +89,20 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
+    async sendAuthorizeDevice(provider: ContractProvider, opts: AuthorizeDeviceOpts) {
+        const body = packTFABody(
+            opts.servicePrivateKey,
+            opts.devicePrivateKey,
+            opts.deviceId,
+            opts.seqno,
+            OpCode.AUTHORIZE_DEVICE,
+            beginCell()
+                .storeUint(opts.newDeviceId, 32)
+                .storeRef(beginCell().storeUint(opts.newDevicePubkey, 256).endCell()),
+        );
+        await this.sendExternal(provider, body);
+    }
+
     async sendExternal(provider: ContractProvider, body: Cell) {
         await provider.external(body);
     }
@@ -144,6 +158,11 @@ export type TFAAuthDevice = {
 
 export type SendActionsOpts = TFAAuthDevice & {
     actionsList: Cell;
+};
+
+export type AuthorizeDeviceOpts = TFAAuthDevice & {
+    newDevicePubkey: bigint;
+    newDeviceId: number;
 };
 
 export function packTFABody(

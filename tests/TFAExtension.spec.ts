@@ -90,6 +90,15 @@ describe('TFAExtension', () => {
         });
     });
 
+    async function linkExtension() {
+        await walletV5.sendAddExtension({
+            authType: 'external',
+            seqno: 1,
+            secretKey: walletKeypair.secretKey,
+            extensionAddress: tFAExtension.address,
+        });
+    }
+
     it('should deploy', async () => {
         expect(await tFAExtension.getSeqno()).toEqual(1);
         expect(await tFAExtension.getWalletAddr()).toEqualAddress(walletV5.address);
@@ -100,12 +109,7 @@ describe('TFAExtension', () => {
     });
 
     it('should send actions', async () => {
-        await walletV5.sendAddExtension({
-            authType: 'external',
-            seqno: 1,
-            secretKey: walletKeypair.secretKey,
-            extensionAddress: tFAExtension.address,
-        });
+        await linkExtension();
         const actions = walletV5.createRequest({
             seqno: 2,
             authType: 'extension',
@@ -183,7 +187,26 @@ describe('TFAExtension', () => {
         }
     });
 
-    it('should authorize devices', async () => {});
+    it('should authorize devices', async () => {
+        await linkExtension();
+
+        const newDeviceKeypair = await randomKeypair();
+        const res = await tFAExtension.sendAuthorizeDevice({
+            servicePrivateKey: serviceKeypair.secretKey,
+            devicePrivateKey: deviceKeypairs[0].secretKey,
+            deviceId: 0,
+            seqno: 1,
+            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
+            newDeviceId: 1,
+        });
+
+        expect(res.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+
+        expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+    });
 
     it('test transfer tokens fees', async () => {
         // ------ PREPARE JETTONS ------
@@ -217,12 +240,7 @@ describe('TFAExtension', () => {
 
         expect(await walletV5JettonWallet.getJettonBalance()).toEqual(toNano('1000'));
 
-        await walletV5.sendAddExtension({
-            authType: 'external',
-            seqno: 1,
-            secretKey: walletKeypair.secretKey,
-            extensionAddress: tFAExtension.address,
-        });
+        await linkExtension();
 
         let extensionSeqno = 1;
         async function test(receiver1: Address, receiver2: Address) {
