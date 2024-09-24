@@ -11,7 +11,7 @@ import {
     TransactionComputeVm,
     TransactionDescriptionGeneric,
 } from '@ton/core';
-import { OpCode, TFAExtension } from '../wrappers/TFAExtension';
+import { OpCode, RecoverState, TFAExtension } from '../wrappers/TFAExtension';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { getSecureRandomBytes, KeyPair, keyPairFromSeed, sign } from '@ton/crypto';
@@ -91,8 +91,12 @@ describe('TFAExtension', () => {
     });
 
     it('should deploy', async () => {
-        // the check is done inside beforeEach
-        // blockchain and tFAExtension are ready to use
+        expect(await tFAExtension.getSeqno()).toEqual(1);
+        expect(await tFAExtension.getWalletAddr()).toEqualAddress(walletV5.address);
+        expect(await tFAExtension.getServicePubkey()).toEqual(bufferToBigInt(serviceKeypair.publicKey));
+        expect(await tFAExtension.getSeedPubkey()).toEqual(bufferToBigInt(seedKeypair.publicKey));
+        expect(await tFAExtension.getDevicePubkey(0)).toEqual(bufferToBigInt(deviceKeypairs[0].publicKey));
+        expect(await tFAExtension.getRecoverState()).toEqual(RecoverState.NONE);
     });
 
     it('should send actions', async () => {

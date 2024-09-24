@@ -1,9 +1,6 @@
 #include "imports/stdlib.fc";
 #include "imports/shared.fc";
 
-const state::idle = 0;
-const state::wait_timeout = 1;
-
 const op::install = 125;
 const op::send_actions = 130;
 const op::authorize_device = 131;
@@ -14,9 +11,6 @@ const op::cancel_request = 134;
 cell get_wallet_v5_code() asm "<b 2 8 u, 0xe4cf3b2f4c6d6a61ea0f2b5447d266785b26af3637db2deee6bcd1aa826f3412 256 u, b>spec PUSHREF";
 
 const one_ton = 1000000000;
-
-;; storage$_ seqno:uint32 wallet:MsgAddressInt service_pubkey:uint256 seed_pubkey:uint256
-;;                     device_pubkeys:Dict recover_state:RecoverState = Storage;
 
 (int, slice, int, int, cell, int, slice) load_data() inline {
     var ds = get_data().begin_parse();
@@ -229,7 +223,7 @@ const one_ton = 1000000000;
     }
 
     if (op == op::authorize_device) {
-        throw_unless(32, recover_state == 0);
+        throw_if(38, recover_state);
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
 
         int new_device_pubkey_id = in_msg~load_uint(32);
@@ -353,3 +347,111 @@ const one_ton = 1000000000;
         return ();
     }
 }
+
+;; GET METHODS
+
+int get_seqno() method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    return seqno;
+}
+
+slice get_wallet_addr() method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    return wallet_addr;
+}
+
+int get_service_pubkey() method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    return service_pubkey;
+}
+
+int get_seed_pubkey() method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    return seed_pubkey;
+}
+
+cell get_device_pubkeys() method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    return device_pubkeys;
+}
+
+int get_device_pubkey(int device_pubkey_id) method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    (slice device_pubkey, int found?) = device_pubkeys.udict_get?(32, device_pubkey_id);
+    return device_pubkey.preload_uint(256);
+}
+
+int get_recover_state() method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    return recover_state;
+}
+
+;;slice get_recover_state_info() method_id {
+;;    (
+;;        int seqno,
+;;        slice wallet_addr,
+;;        int service_pubkey,
+;;        int seed_pubkey,
+;;        cell device_pubkeys,
+;;        int recover_state,
+;;        slice rest_state
+;;    ) = load_data();
+;;    throw_unless(50, recover_state == 1);
+;;    return rest_state;
+;;}

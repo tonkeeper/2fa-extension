@@ -78,4 +78,137 @@ export class TFAExtension implements Contract {
     async sendExternal(provider: ContractProvider, body: Cell) {
         await provider.external(body);
     }
+
+    // int get_seqno() method_id {
+    //     (
+    //         int seqno,
+    //         slice wallet_addr,
+    //         int service_pubkey,
+    //         int seed_pubkey,
+    //         cell device_pubkeys,
+    //         int recover_state,
+    //         slice rest_state
+    //     ) = load_data();
+    //     return seqno;
+    // }
+    //
+    // slice get_wallet_addr() method_id {
+    //     (
+    //         int seqno,
+    //         slice wallet_addr,
+    //         int service_pubkey,
+    //         int seed_pubkey,
+    //         cell device_pubkeys,
+    //         int recover_state,
+    //         slice rest_state
+    //     ) = load_data();
+    //     return wallet_addr;
+    // }
+    //
+    // int get_service_pubkey() method_id {
+    //     (
+    //         int seqno,
+    //         slice wallet_addr,
+    //         int service_pubkey,
+    //         int seed_pubkey,
+    //         cell device_pubkeys,
+    //         int recover_state,
+    //         slice rest_state
+    //     ) = load_data();
+    //     return service_pubkey;
+    // }
+    //
+    // int get_seed_pubkey() method_id {
+    //     (
+    //         int seqno,
+    //         slice wallet_addr,
+    //         int service_pubkey,
+    //         int seed_pubkey,
+    //         cell device_pubkeys,
+    //         int recover_state,
+    //         slice rest_state
+    //     ) = load_data();
+    //     return seed_pubkey;
+    // }
+    //
+    // cell get_device_pubkeys() method_id {
+    //     (
+    //         int seqno,
+    //         slice wallet_addr,
+    //         int service_pubkey,
+    //         int seed_pubkey,
+    //         cell device_pubkeys,
+    //         int recover_state,
+    //         slice rest_state
+    //     ) = load_data();
+    //     return device_pubkeys;
+    // }
+    //
+    // int get_device_pubkey(int device_pubkey_id) method_id {
+    //     (
+    //         int seqno,
+    //         slice wallet_addr,
+    //         int service_pubkey,
+    //         int seed_pubkey,
+    //         cell device_pubkeys,
+    //         int recover_state,
+    //         slice rest_state
+    //     ) = load_data();
+    //     (slice device_pubkey, int found?) = device_pubkeys.udict_get?(32, device_pubkey_id);
+    //     return device_pubkey.preload_uint(256);
+    // }
+    //
+    // int get_recover_state() method_id {
+    //     (
+    //         int seqno,
+    //         slice wallet_addr,
+    //         int service_pubkey,
+    //         int seed_pubkey,
+    //         cell device_pubkeys,
+    //         int recover_state,
+    //         slice rest_state
+    //     ) = load_data();
+    //     return recover_state;
+    // }
+
+    async getSeqno(provider: ContractProvider): Promise<number> {
+        const res = await provider.get('get_seqno', []);
+        return res.stack.readNumber();
+    }
+
+    async getWalletAddr(provider: ContractProvider): Promise<Address> {
+        const res = await provider.get('get_wallet_addr', []);
+        return res.stack.readAddress();
+    }
+
+    async getServicePubkey(provider: ContractProvider): Promise<bigint> {
+        const res = await provider.get('get_service_pubkey', []);
+        return res.stack.readBigNumber();
+    }
+
+    async getSeedPubkey(provider: ContractProvider): Promise<bigint> {
+        const res = await provider.get('get_seed_pubkey', []);
+        return res.stack.readBigNumber();
+    }
+
+    async getDevicePubkeys(provider: ContractProvider): Promise<Dictionary<number, bigint>> {
+        const res = await provider.get('get_device_pubkeys', []);
+        const cell = res.stack.readCell();
+        return Dictionary.load(Dictionary.Keys.Uint(32), Dictionary.Values.BigUint(256), cell);
+    }
+
+    async getDevicePubkey(provider: ContractProvider, devicePubkeyId: number): Promise<bigint> {
+        const res = await provider.get('get_device_pubkey', [{ type: 'int', value: BigInt(devicePubkeyId) }]);
+        return res.stack.readBigNumber();
+    }
+
+    async getRecoverState(provider: ContractProvider): Promise<RecoverState> {
+        const res = await provider.get('get_recover_state', []);
+        return res.stack.readNumber();
+    }
+}
+
+export enum RecoverState {
+    NONE = 0,
+    REQUESTED = 1,
 }
