@@ -26,7 +26,7 @@ export function tFAPluginConfigToCell(config: TFAExtensionConfig): Cell {
         .storeUint(0, 256)
         .storeDict()
         .storeUint(0, 1)
-        .storeUint(0, 32)
+        .storeUint(0, 64)
         .endCell();
 }
 
@@ -115,6 +115,17 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
+    async sendRecoverAccess(provider: ContractProvider, opts: RecoverAccessOpts) {
+        const body = packTFASeedBody(
+            opts.servicePrivateKey,
+            opts.seedPrivateKey,
+            opts.seqno,
+            OpCode.RECOVER_ACCESS,
+            beginCell().storeUint(opts.newDeviceId, 32).storeUint(opts.newDevicePubkey, 256),
+        );
+        await this.sendExternal(provider, body);
+    }
+
     async sendExternal(provider: ContractProvider, body: Cell) {
         await provider.external(body);
     }
@@ -156,19 +167,50 @@ export class TFAExtension implements Contract {
 
     async getRecoverState(provider: ContractProvider): Promise<RecoverState> {
         const res = await provider.get('get_recover_state', []);
-        return res.stack.readNumber();
+        const stack = res.stack;
+        const recoveryState = stack.readNumber();
+
+        switch (recoveryState) {
+            case 0:
+                return {
+                    type: 'none',
+                    recoveryBlockedUntil: stack.readNumber(),
+                };
+            case 1:
+                return {
+                    type: 'requested',
+                    recoveryBlockedUntil: stack.readNumber(),
+                    newDeviceId: stack.readNumber(),
+                    newDevicePubkey: stack.readBigNumber(),
+                };
+            default:
+                throw new Error(`Unknown recovery state: ${recoveryState}`);
+        }
     }
 }
 
-export enum RecoverState {
-    NONE = 0,
-    REQUESTED = 1,
-}
+export type RecoverState =
+    | {
+          type: 'requested';
+          recoveryBlockedUntil: number;
+          newDeviceId: number;
+          newDevicePubkey: bigint;
+      }
+    | {
+          type: 'none';
+          recoveryBlockedUntil: number;
+      };
 
 export type TFAAuthDevice = {
     servicePrivateKey: Buffer;
     devicePrivateKey: Buffer;
     deviceId: number;
+    seqno: number;
+};
+
+export type TFAAuthSeed = {
+    servicePrivateKey: Buffer;
+    seedPrivateKey: Buffer;
     seqno: number;
 };
 
@@ -183,6 +225,11 @@ export type AuthorizeDeviceOpts = TFAAuthDevice & {
 
 export type UnathorizeDeviceOpts = TFAAuthDevice & {
     removeDeviceId: number;
+};
+
+export type RecoverAccessOpts = TFAAuthSeed & {
+    newDevicePubkey: bigint;
+    newDeviceId: number;
 };
 
 export function packTFABody(
@@ -201,6 +248,26 @@ export function packTFABody(
         .storeUint(opCode, 32)
         .storeBuffer(signature1)
         .storeRef(beginCell().storeBuffer(signature2).storeUint(deviceId, 32))
+        .storeSlice(dataToSign.beginParse());
+
+    return body.endCell();
+}
+
+export function packTFASeedBody(
+    servicePrivateKey: Buffer,
+    seedPrivateKey: Buffer,
+    seqno: number,
+    opCode: OpCode,
+    payload: Builder,
+): Cell {
+    const dataToSign = beginCell().storeUint(seqno, 32).storeBuilder(payload).endCell();
+    const signature1 = sign(dataToSign.hash(), servicePrivateKey);
+    const signature2 = sign(dataToSign.hash(), seedPrivateKey);
+
+    const body = beginCell()
+        .storeUint(opCode, 32)
+        .storeBuffer(signature1)
+        .storeRef(beginCell().storeBuffer(signature2))
         .storeSlice(dataToSign.beginParse());
 
     return body.endCell();

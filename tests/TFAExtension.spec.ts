@@ -105,7 +105,8 @@ describe('TFAExtension', () => {
         expect(await tFAExtension.getServicePubkey()).toEqual(bufferToBigInt(serviceKeypair.publicKey));
         expect(await tFAExtension.getSeedPubkey()).toEqual(bufferToBigInt(seedKeypair.publicKey));
         expect(await tFAExtension.getDevicePubkey(0)).toEqual(bufferToBigInt(deviceKeypairs[0].publicKey));
-        expect(await tFAExtension.getRecoverState()).toEqual(RecoverState.NONE);
+        const recoverState = await tFAExtension.getRecoverState();
+        expect(recoverState.type).toEqual('none');
     });
 
     it('should send actions', async () => {
@@ -227,6 +228,55 @@ describe('TFAExtension', () => {
         const pubkeys: Dictionary<number, bigint> = await tFAExtension.getDevicePubkeys();
 
         expect(pubkeys.keys().length).toEqual(0);
+    });
+
+    it('should recover access', async () => {
+        await linkExtension();
+
+        const newDeviceKeypair = await randomKeypair();
+        blockchain.now = Math.floor(Date.now() / 1000);
+
+        // ------ STEP 1 ------
+        const res = await tFAExtension.sendRecoverAccess({
+            servicePrivateKey: serviceKeypair.secretKey,
+            seedPrivateKey: seedKeypair.secretKey,
+            seqno: 1,
+            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
+            newDeviceId: 1,
+        });
+
+        expect(res.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+        let state: RecoverState = await tFAExtension.getRecoverState();
+        if (state.type === 'requested') {
+            expect(state.newDeviceId).toEqual(1);
+            expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+        } else {
+            fail('Expected requested state');
+        }
+
+        // ------ STEP 2 ------
+        blockchain.now += 60 * 60 * 24 * 3;
+
+        const res2 = await tFAExtension.sendRecoverAccess({
+            servicePrivateKey: serviceKeypair.secretKey,
+            seedPrivateKey: seedKeypair.secretKey,
+            seqno: 2,
+            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
+            newDeviceId: 1,
+        });
+
+        expect(res2.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+
+        state = await tFAExtension.getRecoverState();
+        expect(state.type).toEqual('none');
+
+        expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
     });
 
     it('test transfer tokens fees', async () => {

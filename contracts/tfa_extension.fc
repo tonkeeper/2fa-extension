@@ -307,8 +307,8 @@ const one_ton = 1000000000;
             slice new_device_pubkey = added_info~load_bits(256);
             int new_device_pubkey_id = added_info~load_uint(32);
 
-            throw_unless(35, equal_slices(new_device_pubkey, in_msg~load_bits(256)));
             throw_unless(36, new_device_pubkey_id == in_msg~load_uint(32));
+            throw_unless(35, equal_slices(new_device_pubkey, in_msg~load_bits(256)));
 
             accept_message();
 
@@ -429,7 +429,7 @@ int get_device_pubkey(int device_pubkey_id) method_id {
     return device_pubkey.preload_uint(256);
 }
 
-int get_recover_state() method_id {
+(int, int, int, int) get_recover_state() method_id {
     (
         int seqno,
         slice wallet_addr,
@@ -439,19 +439,17 @@ int get_recover_state() method_id {
         int recover_state,
         slice rest_state
     ) = load_data();
-    return recover_state;
-}
+    if (recover_state == 1) {
+        int recovery_blocked_until = rest_state~load_uint(64);
+        slice added_info = rest_state~load_ref().begin_parse();
 
-;;slice get_recover_state_info() method_id {
-;;    (
-;;        int seqno,
-;;        slice wallet_addr,
-;;        int service_pubkey,
-;;        int seed_pubkey,
-;;        cell device_pubkeys,
-;;        int recover_state,
-;;        slice rest_state
-;;    ) = load_data();
-;;    throw_unless(50, recover_state == 1);
-;;    return rest_state;
-;;}
+        int new_device_pubkey = added_info~load_uint(256);
+        int new_device_pubkey_id = added_info~load_uint(32);
+
+        return (1, recovery_blocked_until, new_device_pubkey_id, new_device_pubkey);
+    } else {
+        int recovery_blocked_until = rest_state~load_uint(64);
+
+        return (0, recovery_blocked_until, 0, 0);
+    }
+}
