@@ -128,8 +128,13 @@ describe('TFAExtension', () => {
                 // },
             ],
         });
-        const payload = packSendActionsBody(serviceKeypair, deviceKeypairs[0], 0, 1, actions);
-        const res = await tFAExtension.sendExternal(payload);
+        const res = await tFAExtension.sendSendActions({
+            servicePrivateKey: serviceKeypair.secretKey,
+            devicePrivateKey: deviceKeypairs[0].secretKey,
+            deviceId: 0,
+            seqno: 1,
+            actionsList: actions,
+        });
 
         // expect(res.transactions).toHaveTransaction({
         //     from: walletV5.address,
@@ -177,6 +182,8 @@ describe('TFAExtension', () => {
             console.log(s);
         }
     });
+
+    it('should authorize devices', async () => {});
 
     it('test transfer tokens fees', async () => {
         // ------ PREPARE JETTONS ------
@@ -250,8 +257,13 @@ describe('TFAExtension', () => {
                     // },
                 ],
             });
-            const payload = packSendActionsBody(serviceKeypair, deviceKeypairs[0], 0, extensionSeqno++, actions);
-            const res = await tFAExtension.sendExternal(payload);
+            const res = await tFAExtension.sendSendActions({
+                servicePrivateKey: serviceKeypair.secretKey,
+                devicePrivateKey: deviceKeypairs[0].secretKey,
+                deviceId: 0,
+                seqno: 1,
+                actionsList: actions,
+            });
 
             // expect(res.transactions).toHaveTransaction({
             //     from: walletV5.address,
@@ -310,26 +322,6 @@ function loadNotcoinCode(path: string): Cell {
     const hex: string = json.hex;
 
     return Cell.fromBoc(Buffer.from(hex, 'hex'))[0];
-}
-
-function packSendActionsBody(
-    serviceKeypair: KeyPair,
-    deviceKeypair: KeyPair,
-    deviceId: number,
-    seqno: number,
-    actionsList: Cell,
-): Cell {
-    const body = beginCell().storeUint(seqno, 32).storeRef(actionsList).endCell();
-    const signature1 = sign(body.hash(), serviceKeypair.secretKey);
-    const signature2 = sign(body.hash(), deviceKeypair.secretKey);
-
-    const payload = beginCell()
-        .storeUint(OpCode.SEND_ACTIONS, 32)
-        .storeBuffer(signature1)
-        .storeRef(beginCell().storeBuffer(signature2).storeUint(deviceId, 32))
-        .storeSlice(body.beginParse());
-
-    return payload.endCell();
 }
 
 function keysToDict(keys: KeyPair[]): Dictionary<number, bigint> {

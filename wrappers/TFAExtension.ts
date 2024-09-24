@@ -1,6 +1,7 @@
 import {
     Address,
     beginCell,
+    Builder,
     Cell,
     Contract,
     contractAddress,
@@ -11,6 +12,7 @@ import {
     SendMode,
 } from '@ton/core';
 import { DictionaryKey } from '@ton/core/src/dict/Dictionary';
+import { KeyPair, sign } from '@ton/crypto';
 
 export type TFAExtensionConfig = {
     wallet: Address;
@@ -75,101 +77,21 @@ export class TFAExtension implements Contract {
         });
     }
 
+    async sendSendActions(provider: ContractProvider, opts: SendActionsOpts) {
+        const body = packTFABody(
+            opts.servicePrivateKey,
+            opts.devicePrivateKey,
+            opts.deviceId,
+            opts.seqno,
+            OpCode.SEND_ACTIONS,
+            beginCell().storeRef(opts.actionsList),
+        );
+        await this.sendExternal(provider, body);
+    }
+
     async sendExternal(provider: ContractProvider, body: Cell) {
         await provider.external(body);
     }
-
-    // int get_seqno() method_id {
-    //     (
-    //         int seqno,
-    //         slice wallet_addr,
-    //         int service_pubkey,
-    //         int seed_pubkey,
-    //         cell device_pubkeys,
-    //         int recover_state,
-    //         slice rest_state
-    //     ) = load_data();
-    //     return seqno;
-    // }
-    //
-    // slice get_wallet_addr() method_id {
-    //     (
-    //         int seqno,
-    //         slice wallet_addr,
-    //         int service_pubkey,
-    //         int seed_pubkey,
-    //         cell device_pubkeys,
-    //         int recover_state,
-    //         slice rest_state
-    //     ) = load_data();
-    //     return wallet_addr;
-    // }
-    //
-    // int get_service_pubkey() method_id {
-    //     (
-    //         int seqno,
-    //         slice wallet_addr,
-    //         int service_pubkey,
-    //         int seed_pubkey,
-    //         cell device_pubkeys,
-    //         int recover_state,
-    //         slice rest_state
-    //     ) = load_data();
-    //     return service_pubkey;
-    // }
-    //
-    // int get_seed_pubkey() method_id {
-    //     (
-    //         int seqno,
-    //         slice wallet_addr,
-    //         int service_pubkey,
-    //         int seed_pubkey,
-    //         cell device_pubkeys,
-    //         int recover_state,
-    //         slice rest_state
-    //     ) = load_data();
-    //     return seed_pubkey;
-    // }
-    //
-    // cell get_device_pubkeys() method_id {
-    //     (
-    //         int seqno,
-    //         slice wallet_addr,
-    //         int service_pubkey,
-    //         int seed_pubkey,
-    //         cell device_pubkeys,
-    //         int recover_state,
-    //         slice rest_state
-    //     ) = load_data();
-    //     return device_pubkeys;
-    // }
-    //
-    // int get_device_pubkey(int device_pubkey_id) method_id {
-    //     (
-    //         int seqno,
-    //         slice wallet_addr,
-    //         int service_pubkey,
-    //         int seed_pubkey,
-    //         cell device_pubkeys,
-    //         int recover_state,
-    //         slice rest_state
-    //     ) = load_data();
-    //     (slice device_pubkey, int found?) = device_pubkeys.udict_get?(32, device_pubkey_id);
-    //     return device_pubkey.preload_uint(256);
-    // }
-    //
-    // int get_recover_state() method_id {
-    //     (
-    //         int seqno,
-    //         slice wallet_addr,
-    //         int service_pubkey,
-    //         int seed_pubkey,
-    //         cell device_pubkeys,
-    //         int recover_state,
-    //         slice rest_state
-    //     ) = load_data();
-    //     return recover_state;
-    // }
 
     async getSeqno(provider: ContractProvider): Promise<number> {
         const res = await provider.get('get_seqno', []);
@@ -211,4 +133,36 @@ export class TFAExtension implements Contract {
 export enum RecoverState {
     NONE = 0,
     REQUESTED = 1,
+}
+
+export type TFAAuthDevice = {
+    servicePrivateKey: Buffer;
+    devicePrivateKey: Buffer;
+    deviceId: number;
+    seqno: number;
+};
+
+export type SendActionsOpts = TFAAuthDevice & {
+    actionsList: Cell;
+};
+
+export function packTFABody(
+    servicePrivateKey: Buffer,
+    devicePrivateKey: Buffer,
+    deviceId: number,
+    seqno: number,
+    opCode: OpCode,
+    payload: Builder,
+): Cell {
+    const dataToSign = beginCell().storeUint(seqno, 32).storeBuilder(payload).endCell();
+    const signature1 = sign(dataToSign.hash(), servicePrivateKey);
+    const signature2 = sign(dataToSign.hash(), devicePrivateKey);
+
+    const body = beginCell()
+        .storeUint(opCode, 32)
+        .storeBuffer(signature1)
+        .storeRef(beginCell().storeBuffer(signature2).storeUint(deviceId, 32))
+        .storeSlice(dataToSign.beginParse());
+
+    return body.endCell();
 }
