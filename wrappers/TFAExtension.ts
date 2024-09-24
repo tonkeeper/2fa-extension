@@ -103,6 +103,18 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
+    async sendUnauthorizeDevice(provider: ContractProvider, opts: UnathorizeDeviceOpts) {
+        const body = packTFABody(
+            opts.servicePrivateKey,
+            opts.devicePrivateKey,
+            opts.deviceId,
+            opts.seqno,
+            OpCode.UNAUTHORIZE_DEVICE,
+            beginCell().storeUint(opts.removeDeviceId, 32),
+        );
+        await this.sendExternal(provider, body);
+    }
+
     async sendExternal(provider: ContractProvider, body: Cell) {
         await provider.external(body);
     }
@@ -129,8 +141,12 @@ export class TFAExtension implements Contract {
 
     async getDevicePubkeys(provider: ContractProvider): Promise<Dictionary<number, bigint>> {
         const res = await provider.get('get_device_pubkeys', []);
-        const cell = res.stack.readCell();
-        return Dictionary.load(Dictionary.Keys.Uint(32), Dictionary.Values.BigUint(256), cell);
+        try {
+            const cell = res.stack.readCell();
+            return Dictionary.load(Dictionary.Keys.Uint(32), Dictionary.Values.BigUint(256), cell);
+        } catch (e) {
+            return Dictionary.empty(Dictionary.Keys.Uint(32), Dictionary.Values.BigUint(256));
+        }
     }
 
     async getDevicePubkey(provider: ContractProvider, devicePubkeyId: number): Promise<bigint> {
@@ -163,6 +179,10 @@ export type SendActionsOpts = TFAAuthDevice & {
 export type AuthorizeDeviceOpts = TFAAuthDevice & {
     newDevicePubkey: bigint;
     newDeviceId: number;
+};
+
+export type UnathorizeDeviceOpts = TFAAuthDevice & {
+    removeDeviceId: number;
 };
 
 export function packTFABody(

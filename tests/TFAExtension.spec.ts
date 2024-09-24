@@ -208,6 +208,27 @@ describe('TFAExtension', () => {
         expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
     });
 
+    it('should unauthorize devices', async () => {
+        await linkExtension();
+
+        const res = await tFAExtension.sendUnauthorizeDevice({
+            servicePrivateKey: serviceKeypair.secretKey,
+            devicePrivateKey: deviceKeypairs[0].secretKey,
+            deviceId: 0,
+            seqno: 1,
+            removeDeviceId: 0,
+        });
+
+        expect(res.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+
+        const pubkeys: Dictionary<number, bigint> = await tFAExtension.getDevicePubkeys();
+
+        expect(pubkeys.keys().length).toEqual(0);
+    });
+
     it('test transfer tokens fees', async () => {
         // ------ PREPARE JETTONS ------
         const minter_code = loadNotcoinCode('./notcoin-contract/build/JettonMinter.compiled.json');
