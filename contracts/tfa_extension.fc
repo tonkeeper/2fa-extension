@@ -281,12 +281,15 @@ const one_ton = 1000000000;
         if (recover_state == 0) {
             accept_message();
 
+            int new_device_pubkey = in_msg~load_uint(256);
+            int new_device_pubkey_id = in_msg~load_uint(32);
+
             slice new_recovery_state = begin_cell()
                 .store_uint(now() + 60 * 60 * 24 * 3, 64) ;; recovery_blocked_until
                 .store_ref(
                     begin_cell()
-                        .store_uint(in_msg~load_uint(256), 256) ;; new_device_pubkey
-                        .store_uint(in_msg~load_uint(32), 32) ;; new_device_pubkey_id
+                        .store_uint(new_device_pubkey, 256) ;; new_device_pubkey
+                        .store_uint(new_device_pubkey_id, 32) ;; new_device_pubkey_id
                         .end_cell()
                 )
                 .end_cell()
@@ -307,8 +310,8 @@ const one_ton = 1000000000;
             slice new_device_pubkey = added_info~load_bits(256);
             int new_device_pubkey_id = added_info~load_uint(32);
 
-            throw_unless(36, new_device_pubkey_id == in_msg~load_uint(32));
             throw_unless(35, equal_slices(new_device_pubkey, in_msg~load_bits(256)));
+            throw_unless(36, new_device_pubkey_id == in_msg~load_uint(32));
 
             accept_message();
 

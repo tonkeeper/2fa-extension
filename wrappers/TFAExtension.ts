@@ -121,7 +121,7 @@ export class TFAExtension implements Contract {
             opts.seedPrivateKey,
             opts.seqno,
             OpCode.RECOVER_ACCESS,
-            beginCell().storeUint(opts.newDeviceId, 32).storeUint(opts.newDevicePubkey, 256),
+            beginCell().storeUint(opts.newDevicePubkey, 256).storeUint(opts.newDeviceId, 32),
         );
         await this.sendExternal(provider, body);
     }
