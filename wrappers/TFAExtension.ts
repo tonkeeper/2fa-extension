@@ -126,6 +126,17 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
+    async sendCancelRequest(provider: ContractProvider, opts: CancelRequestOpts) {
+        const body = packTFASeedBody(
+            opts.servicePrivateKey,
+            opts.seedPrivateKey,
+            opts.seqno,
+            OpCode.CANCEL_REQUEST,
+            beginCell(),
+        );
+        await this.sendExternal(provider, body);
+    }
+
     async sendExternal(provider: ContractProvider, body: Cell) {
         await provider.external(body);
     }
@@ -231,6 +242,8 @@ export type RecoverAccessOpts = TFAAuthSeed & {
     newDevicePubkey: bigint;
     newDeviceId: number;
 };
+
+export type CancelRequestOpts = TFAAuthSeed;
 
 export function packTFABody(
     servicePrivateKey: Buffer,

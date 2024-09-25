@@ -336,6 +336,7 @@ const one_ton = 1000000000;
         in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
 
         throw_unless(32, recover_state == 1);
+        accept_message();
 
         save_state(
             seqno + 1,

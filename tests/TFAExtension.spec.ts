@@ -279,6 +279,49 @@ describe('TFAExtension', () => {
         expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
     });
 
+    it('should cancel recover access', async () => {
+        await linkExtension();
+
+        const newDeviceKeypair = await randomKeypair();
+        blockchain.now = Math.floor(Date.now() / 1000);
+
+        // ------ STEP 1 ------
+        const res = await tFAExtension.sendRecoverAccess({
+            servicePrivateKey: serviceKeypair.secretKey,
+            seedPrivateKey: seedKeypair.secretKey,
+            seqno: 1,
+            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
+            newDeviceId: 1,
+        });
+
+        expect(res.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+        let state: RecoverState = await tFAExtension.getRecoverState();
+        if (state.type === 'requested') {
+            expect(state.newDeviceId).toEqual(1);
+            expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+        } else {
+            fail('Expected requested state');
+        }
+
+        // ------ STEP 2 ------
+        const res2 = await tFAExtension.sendCancelRequest({
+            servicePrivateKey: serviceKeypair.secretKey,
+            seedPrivateKey: seedKeypair.secretKey,
+            seqno: 2,
+        });
+
+        expect(res2.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+
+        state = await tFAExtension.getRecoverState();
+        expect(state.type).toEqual('none');
+    });
+
     it('test transfer tokens fees', async () => {
         // ------ PREPARE JETTONS ------
         const minter_code = loadNotcoinCode('./notcoin-contract/build/JettonMinter.compiled.json');
