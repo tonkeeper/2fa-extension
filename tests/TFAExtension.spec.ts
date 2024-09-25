@@ -1,4 +1,4 @@
-import { Blockchain, printTransactionFees, SandboxContract, TreasuryContract } from '@ton/sandbox';
+import { Blockchain, printTransactionFees, SandboxContract, SendMessageResult, TreasuryContract } from '@ton/sandbox';
 import {
     Address,
     beginCell,
@@ -188,46 +188,168 @@ describe('TFAExtension', () => {
         }
     });
 
-    it('should authorize devices', async () => {
-        await linkExtension();
+    async function shouldFail(f: Promise<any>) {
+        try {
+            await f;
+        } catch (e) {
+            return;
+        }
+        throw new Error('Expected to fail');
+    }
 
-        const newDeviceKeypair = await randomKeypair();
-        const res = await tFAExtension.sendAuthorizeDevice({
-            servicePrivateKey: serviceKeypair.secretKey,
-            devicePrivateKey: deviceKeypairs[0].secretKey,
-            deviceId: 0,
-            seqno: 1,
-            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
-            newDeviceId: 1,
-        });
+    it('should test shouldFail function', async () => {
+        async function throwable() {
+            throw new Error('Expected to fail');
+        }
+        async function notThrowable() {}
 
-        expect(res.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
-        });
+        await expect(shouldFail(notThrowable())).rejects.toThrow(new Error('Expected to fail'));
 
-        expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+        await expect(shouldFail(throwable())).resolves.toEqual(undefined);
     });
 
-    it('should unauthorize devices', async () => {
-        await linkExtension();
+    describe('authorizeDevice', () => {
+        async function authorizeDeviceTest(opts: {
+            servicePrivateKey?: Buffer;
+            devicePrivateKey?: Buffer;
+            deviceId?: number;
+            newDevicePubkey?: Buffer;
+            newDeviceId?: number;
+        }): Promise<[SendMessageResult, Buffer]> {
+            let {
+                servicePrivateKey = serviceKeypair.secretKey,
+                devicePrivateKey = deviceKeypairs[0].secretKey,
+                deviceId = 0,
+                newDevicePubkey = null,
+                newDeviceId = 1,
+            } = opts;
+            await linkExtension();
 
-        const res = await tFAExtension.sendUnauthorizeDevice({
-            servicePrivateKey: serviceKeypair.secretKey,
-            devicePrivateKey: deviceKeypairs[0].secretKey,
-            deviceId: 0,
-            seqno: 1,
-            removeDeviceId: 0,
+            if (newDevicePubkey === null) {
+                newDevicePubkey = (await randomKeypair()).publicKey;
+            }
+
+            const res = await tFAExtension.sendAuthorizeDevice({
+                servicePrivateKey,
+                devicePrivateKey,
+                deviceId,
+                seqno: await tFAExtension.getSeqno(),
+                newDevicePubkey: bufferToBigInt(newDevicePubkey),
+                newDeviceId,
+            });
+
+            return [res, newDevicePubkey];
+        }
+
+        it('should authorize devices', async () => {
+            const [res, newDevicePubkey] = await authorizeDeviceTest({});
+
+            expect(res.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+            expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDevicePubkey));
+            expect(await tFAExtension.getSeqno()).toEqual(2);
         });
 
-        expect(res.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
+        it('should not authorize devices with wrong servicePrivateKey', async () => {
+            const randomNewKeypair = await randomKeypair();
+            await shouldFail(authorizeDeviceTest({ servicePrivateKey: randomNewKeypair.secretKey }));
         });
 
-        const pubkeys: Dictionary<number, bigint> = await tFAExtension.getDevicePubkeys();
+        it('should not authorize devices with wrong devicePrivateKey', async () => {
+            const randomNewKeypair = await randomKeypair();
+            await shouldFail(authorizeDeviceTest({ devicePrivateKey: randomNewKeypair.secretKey }));
+        });
 
-        expect(pubkeys.keys().length).toEqual(0);
+        it('should not authorize devices with wrong deviceId', async () => {
+            await shouldFail(authorizeDeviceTest({ deviceId: 1 }));
+        });
+
+        it('should not authorize devices with existing newDeviceId', async () => {
+            await shouldFail(authorizeDeviceTest({ newDeviceId: 0 }));
+        });
+
+        it('should not authorize device if recover process is started', async () => {
+            await tFAExtension.sendRecoverAccess({
+                servicePrivateKey: serviceKeypair.secretKey,
+                seedPrivateKey: seedKeypair.secretKey,
+                seqno: 1,
+                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
+                newDeviceId: 1,
+            });
+
+            await shouldFail(authorizeDeviceTest({}));
+        });
+    });
+
+    describe('unauthorizeDevice', () => {
+        async function unauthorizeDeviceTest(opts: {
+            servicePrivateKey?: Buffer;
+            devicePrivateKey?: Buffer;
+            deviceId?: number;
+            removeDeviceId?: number;
+        }): Promise<SendMessageResult> {
+            let {
+                servicePrivateKey = serviceKeypair.secretKey,
+                devicePrivateKey = deviceKeypairs[0].secretKey,
+                deviceId = 0,
+                removeDeviceId = 0,
+            } = opts;
+            await linkExtension();
+
+            const res = await tFAExtension.sendUnauthorizeDevice({
+                servicePrivateKey,
+                devicePrivateKey,
+                deviceId,
+                seqno: await tFAExtension.getSeqno(),
+                removeDeviceId,
+            });
+
+            return res;
+        }
+        it('should unauthorize devices', async () => {
+            const res = await unauthorizeDeviceTest({});
+
+            expect(res.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+
+            const pubkeys: Dictionary<number, bigint> = await tFAExtension.getDevicePubkeys();
+
+            expect(pubkeys.keys().length).toEqual(0);
+        });
+
+        it('should not unauthorize devices with wrong servicePrivateKey', async () => {
+            const randomNewKeypair = await randomKeypair();
+            await shouldFail(unauthorizeDeviceTest({ servicePrivateKey: randomNewKeypair.secretKey }));
+        });
+
+        it('should not unauthorize devices with wrong devicePrivateKey', async () => {
+            const randomNewKeypair = await randomKeypair();
+            await shouldFail(unauthorizeDeviceTest({ devicePrivateKey: randomNewKeypair.secretKey }));
+        });
+
+        it('should not unauthorize devices with wrong deviceId', async () => {
+            await shouldFail(unauthorizeDeviceTest({ deviceId: 1 }));
+        });
+
+        it('should not unauthorize devices with wrong removeDeviceId', async () => {
+            await shouldFail(unauthorizeDeviceTest({ removeDeviceId: 1 }));
+        });
+
+        it('should not unauthorize device if recover process is started', async () => {
+            await tFAExtension.sendRecoverAccess({
+                servicePrivateKey: serviceKeypair.secretKey,
+                seedPrivateKey: seedKeypair.secretKey,
+                seqno: 1,
+                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
+                newDeviceId: 1,
+            });
+
+            await shouldFail(unauthorizeDeviceTest({}));
+        });
     });
 
     it('should recover access', async () => {
