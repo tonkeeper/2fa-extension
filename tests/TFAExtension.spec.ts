@@ -16,7 +16,7 @@ import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { getSecureRandomBytes, KeyPair, keyPairFromSeed, sign } from '@ton/crypto';
 import { Opcodes, WalletV5 } from '../wrappers/WalletV5';
-import { ActionSendMsg, packActionsList } from './wallet/wallet_v5_actions';
+import { ActionSendMsg, ExtendedAction, OutAction, packActionsList } from './wallet/wallet_v5_actions';
 import { SendMode } from '@ton/core';
 import { deployWallet, linkExtensionToWallet } from './wallet/WalletUtils';
 import { JettonMaster, WalletContractV5R1 } from '@ton/ton';
@@ -25,6 +25,7 @@ import { Transaction } from '@ton/core';
 import { jettonContentToCell, JettonMinter } from '../notcoin-contract/wrappers/JettonMinter';
 import * as fs from 'fs';
 import { JettonWallet } from '../notcoin-contract/wrappers/JettonWallet';
+import { OutActionWalletV5 } from '@ton/ton/dist/wallets/v5beta/WalletV5OutActions';
 
 describe('TFAExtension', () => {
     let code: Cell;
@@ -109,85 +110,6 @@ describe('TFAExtension', () => {
         expect(recoverState.type).toEqual('none');
     });
 
-    it('should send actions', async () => {
-        await linkExtension();
-        const actions = walletV5.createRequest({
-            seqno: 2,
-            authType: 'extension',
-            actions: [
-                {
-                    type: 'sendMsg',
-                    mode: SendMode.PAY_GAS_SEPARATELY,
-                    outMsg: internal({
-                        to: deployer.address,
-                        value: toNano('0.1'),
-                    }),
-                },
-                // {
-                //     type: 'sendMsg',
-                //     mode: SendMode.PAY_GAS_SEPARATELY,
-                //     outMsg: internal({
-                //         to: tFAExtension.address,
-                //         value: toNano('1'),
-                //     }),
-                // },
-            ],
-        });
-        const res = await tFAExtension.sendSendActions({
-            servicePrivateKey: serviceKeypair.secretKey,
-            devicePrivateKey: deviceKeypairs[0].secretKey,
-            deviceId: 0,
-            seqno: 1,
-            actionsList: actions,
-        });
-
-        // expect(res.transactions).toHaveTransaction({
-        //     from: walletV5.address,
-        //     to: tFAExtension.address,
-        //     value: toNano('1.0'),
-        //     success: true,
-        // });
-
-        expect(res.transactions).toHaveTransaction({
-            from: walletV5.address,
-            to: deployer.address,
-            value: toNano('0.1'),
-            success: true,
-        });
-
-        console.debug(
-            'SINGLE EXTERNAL SEND ACTIONS GAS USED:',
-            ((res.transactions[0].description as TransactionDescriptionGeneric).computePhase as TransactionComputeVm)
-                .gasUsed,
-        );
-
-        {
-            const actions = walletV5.createRequest({
-                seqno: 2,
-                secretKey: walletKeypair.secretKey,
-                authType: 'external',
-                actions: [
-                    {
-                        type: 'sendMsg',
-                        mode: SendMode.PAY_GAS_SEPARATELY,
-                        outMsg: internal({
-                            to: deployer.address,
-                            value: toNano('0.1'),
-                        }),
-                    },
-                ],
-            });
-            const resSimple = await walletV5.send(actions);
-            const totalFeesSimple = resSimple.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
-            const totalFees = res.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
-
-            let s = `[Simple Transfer][no 2FA] Total fees: ${Number(totalFeesSimple) / 1000000000}\n`;
-            s += `[Simple Transfer][   2FA] Total fees: ${Number(totalFees) / 1000000000}\n`;
-            s += `[Simple Transfer] increase: ${(Number(totalFees) / Number(totalFeesSimple)).toFixed(2)}x\n`;
-            console.log(s);
-        }
-    });
-
     async function shouldFail(f: Promise<any>) {
         try {
             await f;
@@ -206,6 +128,168 @@ describe('TFAExtension', () => {
         await expect(shouldFail(notThrowable())).rejects.toThrow(new Error('Expected to fail'));
 
         await expect(shouldFail(throwable())).resolves.toEqual(undefined);
+    });
+
+    describe('sendSendActions', () => {
+        async function testSendActions(
+            prefix: string,
+            opts: {
+                servicePrivateKey?: Buffer;
+                devicePrivateKey?: Buffer;
+                deviceId?: number;
+                actions: OutActionWalletV5[];
+                refill?: boolean;
+                logGasUsage?: boolean;
+            },
+        ) {
+            let {
+                servicePrivateKey = serviceKeypair.secretKey,
+                devicePrivateKey = deviceKeypairs[0].secretKey,
+                deviceId = 0,
+                actions = [],
+                refill = false,
+                logGasUsage = false,
+            } = opts;
+            const originalActions = actions.slice();
+            if (refill) {
+                actions.unshift({
+                    type: 'sendMsg',
+                    mode: SendMode.PAY_GAS_SEPARATELY,
+                    outMsg: internal({
+                        to: tFAExtension.address,
+                        value: toNano('1'),
+                    }),
+                });
+            }
+
+            const request = walletV5.createRequest({
+                seqno: await walletV5.getSeqno(),
+                authType: 'extension',
+                actions,
+            });
+            const res1 = await tFAExtension.sendSendActions({
+                servicePrivateKey: servicePrivateKey,
+                devicePrivateKey: devicePrivateKey,
+                deviceId,
+                seqno: await tFAExtension.getSeqno(),
+                actionsList: request,
+            });
+
+            let s = '';
+            if (logGasUsage) {
+                let gasUsed = (
+                    (res1.transactions[0].description as TransactionDescriptionGeneric)
+                        .computePhase as TransactionComputeVm
+                ).gasUsed;
+                s += `[${prefix}] GAS USED: ${gasUsed}\n`;
+            }
+
+            if (logGasUsage) {
+                const request2 = walletV5.createRequest({
+                    seqno: await walletV5.getSeqno(),
+                    secretKey: walletKeypair.secretKey,
+                    authType: 'external',
+                    actions: originalActions,
+                });
+                const resSimple = await walletV5.send(request2);
+
+                const totalFeesSimple = resSimple.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
+                const totalFees = res1.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
+
+                s += `[${prefix}][no 2FA] Total fees: ${Number(totalFeesSimple) / 1000000000}\n`;
+                s += `[${prefix}][   2FA] Total fees: ${Number(totalFees) / 1000000000}\n`;
+                s += `[${prefix}] increase: ${(Number(totalFees) / Number(totalFeesSimple)).toFixed(2)}x\n`;
+                console.log(s);
+            }
+
+            return res1;
+        }
+
+        it('should send actions (no refill)', async () => {
+            await linkExtension();
+
+            const res = await testSendActions('Simple Transfer', {
+                actions: [
+                    {
+                        type: 'sendMsg',
+                        mode: SendMode.PAY_GAS_SEPARATELY,
+                        outMsg: internal({
+                            to: deployer.address,
+                            value: toNano('0.1'),
+                        }),
+                    },
+                ],
+                refill: false,
+                logGasUsage: true,
+            });
+
+            expect(res.transactions).toHaveTransaction({
+                from: walletV5.address,
+                to: deployer.address,
+                value: toNano('0.1'),
+                success: true,
+            });
+        });
+
+        it('should send actions (refill)', async () => {
+            await linkExtension();
+
+            const res = await testSendActions('Transfer & Refill', {
+                actions: [
+                    {
+                        type: 'sendMsg',
+                        mode: SendMode.PAY_GAS_SEPARATELY,
+                        outMsg: internal({
+                            to: deployer.address,
+                            value: toNano('0.1'),
+                        }),
+                    },
+                ],
+                refill: true,
+                logGasUsage: true,
+            });
+
+            expect(res.transactions).toHaveTransaction({
+                from: walletV5.address,
+                to: tFAExtension.address,
+                value: toNano('1.0'),
+                success: true,
+            });
+
+            expect(res.transactions).toHaveTransaction({
+                from: walletV5.address,
+                to: deployer.address,
+                value: toNano('0.1'),
+                success: true,
+            });
+        });
+
+        it('should not send actions with wrong servicePrivateKey', async () => {
+            await shouldFail(
+                testSendActions('Wrong Service Private Key', {
+                    servicePrivateKey: (await randomKeypair()).secretKey,
+                    actions: [],
+                }),
+            );
+        });
+
+        it('should not send actions with wrong devicePrivateKey', async () => {
+            await shouldFail(
+                testSendActions('Wrong Device Private Key', {
+                    devicePrivateKey: (await randomKeypair()).secretKey,
+                    actions: [],
+                }),
+            );
+        });
+
+        it('should not send actions with wrong deviceId', async () => {
+            await shouldFail(
+                testSendActions('Wrong Device Id', {
+                    deviceId: 1,
+                    actions: [],
+                }),
+            );
+        });
     });
 
     describe('authorizeDevice', () => {
