@@ -471,6 +471,7 @@ describe('TFAExtension', () => {
             seedPrivateKey: seedKeypair.secretKey,
             seqno: 2,
             newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
+            validUntil: blockchain.now + 180,
             newDeviceId: 1,
         });
 

@@ -158,7 +158,10 @@ const one_ton = 1000000000;
     throw_unless(32, check_signature(root_hash, service_signature, service_pubkey));
 
     int seqno = cs~load_uint(32);
+    int valid_until = cs~load_uint(64);
+
     throw_unless(34, seqno == stored_seqno);
+    throw_unless(38, valid_until >= now());
 
     return (cs, ());
 }
@@ -176,6 +179,9 @@ const one_ton = 1000000000;
 
     int seqno = cs~load_uint(32);
     throw_unless(37, seqno == stored_seqno);
+
+    int valid_until = cs~load_uint(64);
+    throw_unless(38, valid_until >= now());
 
     return (cs, ());
 }

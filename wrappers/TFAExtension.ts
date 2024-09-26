@@ -83,6 +83,7 @@ export class TFAExtension implements Contract {
             opts.devicePrivateKey,
             opts.deviceId,
             opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.SEND_ACTIONS,
             beginCell().storeRef(opts.actionsList),
         );
@@ -95,6 +96,7 @@ export class TFAExtension implements Contract {
             opts.devicePrivateKey,
             opts.deviceId,
             opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.AUTHORIZE_DEVICE,
             beginCell()
                 .storeUint(opts.newDeviceId, 32)
@@ -109,6 +111,7 @@ export class TFAExtension implements Contract {
             opts.devicePrivateKey,
             opts.deviceId,
             opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.UNAUTHORIZE_DEVICE,
             beginCell().storeUint(opts.removeDeviceId, 32),
         );
@@ -120,6 +123,7 @@ export class TFAExtension implements Contract {
             opts.servicePrivateKey,
             opts.seedPrivateKey,
             opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.RECOVER_ACCESS,
             beginCell().storeUint(opts.newDevicePubkey, 256).storeUint(opts.newDeviceId, 32),
         );
@@ -131,6 +135,7 @@ export class TFAExtension implements Contract {
             opts.servicePrivateKey,
             opts.seedPrivateKey,
             opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.CANCEL_REQUEST,
             beginCell(),
         );
@@ -217,12 +222,14 @@ export type TFAAuthDevice = {
     devicePrivateKey: Buffer;
     deviceId: number;
     seqno: number;
+    validUntil?: number;
 };
 
 export type TFAAuthSeed = {
     servicePrivateKey: Buffer;
     seedPrivateKey: Buffer;
     seqno: number;
+    validUntil?: number;
 };
 
 export type SendActionsOpts = TFAAuthDevice & {
@@ -250,10 +257,11 @@ export function packTFABody(
     devicePrivateKey: Buffer,
     deviceId: number,
     seqno: number,
+    validUntil: number,
     opCode: OpCode,
     payload: Builder,
 ): Cell {
-    const dataToSign = beginCell().storeUint(seqno, 32).storeBuilder(payload).endCell();
+    const dataToSign = beginCell().storeUint(seqno, 32).storeUint(validUntil, 64).storeBuilder(payload).endCell();
     const signature1 = sign(dataToSign.hash(), servicePrivateKey);
     const signature2 = sign(dataToSign.hash(), devicePrivateKey);
 
@@ -270,10 +278,11 @@ export function packTFASeedBody(
     servicePrivateKey: Buffer,
     seedPrivateKey: Buffer,
     seqno: number,
+    validUntil: number,
     opCode: OpCode,
     payload: Builder,
 ): Cell {
-    const dataToSign = beginCell().storeUint(seqno, 32).storeBuilder(payload).endCell();
+    const dataToSign = beginCell().storeUint(seqno, 32).storeUint(validUntil, 64).storeBuilder(payload).endCell();
     const signature1 = sign(dataToSign.hash(), servicePrivateKey);
     const signature2 = sign(dataToSign.hash(), seedPrivateKey);
 
