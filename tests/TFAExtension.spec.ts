@@ -143,6 +143,8 @@ describe('TFAExtension', () => {
                 actions: OutActionWalletV5[];
                 refill?: boolean;
                 logGasUsage?: boolean;
+                validUntil?: number;
+                seqno?: number;
             },
         ) {
             let {
@@ -152,6 +154,8 @@ describe('TFAExtension', () => {
                 actions = [],
                 refill = false,
                 logGasUsage = false,
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+                seqno = await tFAExtension.getSeqno(),
             } = opts;
             const originalActions = actions.slice();
             if (refill) {
@@ -174,8 +178,9 @@ describe('TFAExtension', () => {
                 servicePrivateKey: servicePrivateKey,
                 devicePrivateKey: devicePrivateKey,
                 deviceId,
-                seqno: await tFAExtension.getSeqno(),
+                seqno,
                 actionsList: request,
+                validUntil,
             });
 
             let s = '';
@@ -308,6 +313,40 @@ describe('TFAExtension', () => {
                 }),
             );
         });
+
+        it('should not send actions with wrong validUntil', async () => {
+            await shouldFail(
+                testSendActions('Wrong Valid Until', {
+                    actions: [],
+                    validUntil: Math.floor(Date.now() / 1000) - 1,
+                }),
+            );
+        });
+
+        it('should not send actions with wrong seqno', async () => {
+            await shouldFail(
+                testSendActions('Wrong Seqno', {
+                    actions: [],
+                    seqno: 0,
+                }),
+            );
+        });
+
+        it('should not send actions if recover process is started', async () => {
+            await tFAExtension.sendRecoverAccess({
+                servicePrivateKey: serviceKeypair.secretKey,
+                seedPrivateKey: seedKeypair.secretKey,
+                seqno: 1,
+                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
+                newDeviceId: 1,
+            });
+
+            await shouldFail(
+                testSendActions('Recover Process Started', {
+                    actions: [],
+                }),
+            );
+        });
     });
 
     describe('authorizeDevice', () => {
@@ -317,6 +356,8 @@ describe('TFAExtension', () => {
             deviceId?: number;
             newDevicePubkey?: Buffer;
             newDeviceId?: number;
+            validUntil?: number;
+            seqno?: number;
         }): Promise<[SendMessageResult, Buffer]> {
             let {
                 servicePrivateKey = serviceKeypair.secretKey,
@@ -324,6 +365,8 @@ describe('TFAExtension', () => {
                 deviceId = 0,
                 newDevicePubkey = null,
                 newDeviceId = 1,
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+                seqno = await tFAExtension.getSeqno(),
             } = opts;
 
             if (newDevicePubkey === null) {
@@ -334,7 +377,8 @@ describe('TFAExtension', () => {
                 servicePrivateKey,
                 devicePrivateKey,
                 deviceId,
-                seqno: await tFAExtension.getSeqno(),
+                seqno,
+                validUntil,
                 newDevicePubkey: bufferToBigInt(newDevicePubkey),
                 newDeviceId,
             });
@@ -371,6 +415,14 @@ describe('TFAExtension', () => {
             await shouldFail(authorizeDeviceTest({ newDeviceId: 0 }));
         });
 
+        it('should not authorize devices with wrong validUntil', async () => {
+            await shouldFail(authorizeDeviceTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
+        });
+
+        it('should not authorize devices with wrong seqno', async () => {
+            await shouldFail(authorizeDeviceTest({ seqno: 0 }));
+        });
+
         it('should not authorize device if recover process is started', async () => {
             await tFAExtension.sendRecoverAccess({
                 servicePrivateKey: serviceKeypair.secretKey,
@@ -390,20 +442,25 @@ describe('TFAExtension', () => {
             devicePrivateKey?: Buffer;
             deviceId?: number;
             removeDeviceId?: number;
+            validUntil?: number;
+            seqno?: number;
         }): Promise<SendMessageResult> {
             let {
                 servicePrivateKey = serviceKeypair.secretKey,
                 devicePrivateKey = deviceKeypairs[0].secretKey,
                 deviceId = 0,
                 removeDeviceId = 0,
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+                seqno = await tFAExtension.getSeqno(),
             } = opts;
 
             const res = await tFAExtension.sendUnauthorizeDevice({
                 servicePrivateKey,
                 devicePrivateKey,
                 deviceId,
-                seqno: await tFAExtension.getSeqno(),
+                seqno,
                 removeDeviceId,
+                validUntil,
             });
 
             return res;
@@ -439,6 +496,14 @@ describe('TFAExtension', () => {
             await shouldFail(unauthorizeDeviceTest({ removeDeviceId: 1 }));
         });
 
+        it('should not unauthorize devices with wrong validUntil', async () => {
+            await shouldFail(unauthorizeDeviceTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
+        });
+
+        it('should not unauthorize devices with wrong seqno', async () => {
+            await shouldFail(unauthorizeDeviceTest({ seqno: 0 }));
+        });
+
         it('should not unauthorize device if recover process is started', async () => {
             await tFAExtension.sendRecoverAccess({
                 servicePrivateKey: serviceKeypair.secretKey,
@@ -457,18 +522,23 @@ describe('TFAExtension', () => {
             servicePrivateKey?: Buffer;
             devicePrivateKey?: Buffer;
             deviceId?: number;
+            validUntil?: number;
+            seqno?: number;
         }): Promise<SendMessageResult> {
             let {
                 servicePrivateKey = serviceKeypair.secretKey,
                 devicePrivateKey = deviceKeypairs[0].secretKey,
                 deviceId = 0,
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+                seqno = await tFAExtension.getSeqno(),
             } = opts;
 
             const res = await tFAExtension.sendDestruct({
                 servicePrivateKey,
                 devicePrivateKey,
                 deviceId,
-                seqno: await tFAExtension.getSeqno(),
+                seqno,
+                validUntil,
             });
 
             return res;
@@ -510,7 +580,15 @@ describe('TFAExtension', () => {
             await shouldFail(destructTest({ deviceId: 1 }));
         });
 
-        it('should not destruct device if recover process is started', async () => {
+        it('should not destruct with wrong validUntil', async () => {
+            await shouldFail(destructTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
+        });
+
+        it('should not destruct with wrong seqno', async () => {
+            await shouldFail(destructTest({ seqno: 0 }));
+        });
+
+        it('should not destruct if recover process is started', async () => {
             await tFAExtension.sendRecoverAccess({
                 servicePrivateKey: serviceKeypair.secretKey,
                 seedPrivateKey: seedKeypair.secretKey,
