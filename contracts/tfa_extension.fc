@@ -7,6 +7,7 @@ const op::authorize_device = 131;
 const op::unauthorize_device = 132;
 const op::recover_access = 133;
 const op::cancel_request = 134;
+const op::destruct = 135;
 
 cell get_wallet_v5_code() asm "<b 2 8 u, 0xe4cf3b2f4c6d6a61ea0f2b5447d266785b26af3637db2deee6bcd1aa826f3412 256 u, b>spec PUSHREF";
 
@@ -87,52 +88,26 @@ const one_ton = 1000000000;
             rest_state
         );
 
-        return ();
-    }
+        cell msg = begin_cell()
+            .store_nonbounce_flags()
+            .store_slice(wallet_addr)
+            .store_coins(one_ton / 100)
+            .store_ref_body(
+                begin_cell()
+                .store_uint(op::wallet::request_by_extension, 32)
+                .store_uint(0, 64)
+                .store_out_action_list(null())
+                .store_int(-1, 1)
+                .store_set_signature_auth(
+                    0,
+                    null()
+                )
+                .end_cell()
+            )
+            .end_cell();
 
-;;    if (op == op::cancel_recovery) {
-;;        throw_unless(35, state == state::wait_timeout);
-;;        throw_unless(36, equal_slices(sender, wallet_addr));
-;;
-;;        save_state_idle(
-;;            recovery_id,
-;;            owner_pubkey,
-;;            tp_pubkey,
-;;            wallet_addr,
-;;            timeout
-;;        );
-;;
-;;        return ();
-;;    }
-;;    if (op == op::update_tp_pubkey) {
-;;        throw_unless(38, state == state::idle);
-;;        throw_unless(36, equal_slices(sender, wallet_addr));
-;;
-;;        int new_tp_pubkey = in_msg_body~load_uint(256);
-;;
-;;        save_state_idle(
-;;            recovery_id,
-;;            owner_pubkey,
-;;            new_tp_pubkey,
-;;            wallet_addr,
-;;            timeout
-;;        );
-;;
-;;        return ();
-;;    }
+        send_raw_message(msg, 0);
 
-    if (op == op::destruct) {
-        throw_unless(36, equal_slices(sender, wallet_addr));
-
-        ;; It is assumed that the wallet removed this extension by itself, so there is no need to send
-        ;; `delete_ext` message to the wallet.
-        var msg = begin_cell()
-        .store_nonbounce_flags()
-        .store_slice(wallet_addr)
-        .store_coins(0)
-        .store_default_body();
-
-        send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
         return ();
     }
 
@@ -356,6 +331,38 @@ const one_ton = 1000000000;
 
         return ();
     }
+
+    if (op == op::destruct) {
+        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+
+        throw_unless(32, recover_state == 0);
+        accept_message();
+
+        var msg = begin_cell()
+            .store_nonbounce_flags()
+            .store_slice(wallet_addr)
+            .store_coins(0)
+            .store_ref_body(
+                begin_cell()
+                    .store_uint(op::wallet::request_by_extension, 32)
+                    .store_uint(0, 64)
+                    .store_out_action_list(null())
+                    .store_int(-1, 1)
+                    .store_set_signature_auth(
+                        1,
+                        begin_cell()
+                        .store_delete_ext_action(
+                            my_address(),
+                            null()
+                        ).end_cell()
+                    )
+                    .end_cell()
+            );
+
+
+        send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
+        return ();
+     }
 }
 
 ;; GET METHODS

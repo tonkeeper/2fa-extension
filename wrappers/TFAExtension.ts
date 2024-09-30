@@ -37,6 +37,7 @@ export enum OpCode {
     UNAUTHORIZE_DEVICE = 132,
     RECOVER_ACCESS = 133,
     CANCEL_REQUEST = 134,
+    DESTRUCT = 135,
 }
 
 export class TFAExtension implements Contract {
@@ -137,6 +138,19 @@ export class TFAExtension implements Contract {
             opts.seqno,
             opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.CANCEL_REQUEST,
+            beginCell(),
+        );
+        await this.sendExternal(provider, body);
+    }
+
+    async sendDestruct(provider: ContractProvider, opts: DestructOpts) {
+        const body = packTFABody(
+            opts.servicePrivateKey,
+            opts.devicePrivateKey,
+            opts.deviceId,
+            opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
+            OpCode.DESTRUCT,
             beginCell(),
         );
         await this.sendExternal(provider, body);
@@ -251,6 +265,8 @@ export type RecoverAccessOpts = TFAAuthSeed & {
 };
 
 export type CancelRequestOpts = TFAAuthSeed;
+
+export type DestructOpts = TFAAuthDevice;
 
 export function packTFABody(
     servicePrivateKey: Buffer,

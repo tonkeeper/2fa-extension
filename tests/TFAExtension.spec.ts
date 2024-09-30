@@ -76,6 +76,8 @@ describe('TFAExtension', () => {
             bounce: false,
         });
 
+        await linkExtension();
+
         const sender = (await walletV5.sender(walletKeypair.secretKey)).result;
         const deployResult = await tFAExtension.sendDeploy(sender, toNano('1.5'), {
             servicePubkey: bufferToBigInt(serviceKeypair.publicKey),
@@ -89,12 +91,13 @@ describe('TFAExtension', () => {
             deploy: true,
             success: true,
         });
+        expect(await walletV5.getIsSecretKeyAuthEnabled()).toEqual(false);
     });
 
     async function linkExtension() {
         await walletV5.sendAddExtension({
             authType: 'external',
-            seqno: 1,
+            seqno: await walletV5.getSeqno(),
             secretKey: walletKeypair.secretKey,
             extensionAddress: tFAExtension.address,
         });
@@ -185,13 +188,32 @@ describe('TFAExtension', () => {
             }
 
             if (logGasUsage) {
-                const request2 = walletV5.createRequest({
-                    seqno: await walletV5.getSeqno(),
-                    secretKey: walletKeypair.secretKey,
+                const walletV5_2_keypair = await randomKeypair();
+                const walletV5_2 = blockchain.openContract(
+                    WalletContractV5R1.create({
+                        publicKey: walletV5_2_keypair.publicKey,
+                    }),
+                );
+                await deployer.send({
+                    value: toNano('1000'),
+                    to: walletV5_2.address,
+                    bounce: false,
+                });
+                await walletV5_2.sendTransfer({
+                    seqno: await walletV5_2.getSeqno(),
+                    secretKey: walletV5_2_keypair.secretKey,
+                    authType: 'external',
+                    messages: [],
+                    sendMode: SendMode.NONE,
+                });
+
+                const request2 = walletV5_2.createRequest({
+                    seqno: await walletV5_2.getSeqno(),
+                    secretKey: walletV5_2_keypair.secretKey,
                     authType: 'external',
                     actions: originalActions,
                 });
-                const resSimple = await walletV5.send(request2);
+                const resSimple = await walletV5_2.send(request2);
 
                 const totalFeesSimple = resSimple.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
                 const totalFees = res1.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
@@ -206,8 +228,6 @@ describe('TFAExtension', () => {
         }
 
         it('should send actions (no refill)', async () => {
-            await linkExtension();
-
             const res = await testSendActions('Simple Transfer', {
                 actions: [
                     {
@@ -232,8 +252,6 @@ describe('TFAExtension', () => {
         });
 
         it('should send actions (refill)', async () => {
-            await linkExtension();
-
             const res = await testSendActions('Transfer & Refill', {
                 actions: [
                     {
@@ -307,7 +325,6 @@ describe('TFAExtension', () => {
                 newDevicePubkey = null,
                 newDeviceId = 1,
             } = opts;
-            await linkExtension();
 
             if (newDevicePubkey === null) {
                 newDevicePubkey = (await randomKeypair()).publicKey;
@@ -380,7 +397,6 @@ describe('TFAExtension', () => {
                 deviceId = 0,
                 removeDeviceId = 0,
             } = opts;
-            await linkExtension();
 
             const res = await tFAExtension.sendUnauthorizeDevice({
                 servicePrivateKey,
@@ -436,9 +452,78 @@ describe('TFAExtension', () => {
         });
     });
 
-    it('should recover access', async () => {
-        await linkExtension();
+    describe('destruct', () => {
+        async function destructTest(opts: {
+            servicePrivateKey?: Buffer;
+            devicePrivateKey?: Buffer;
+            deviceId?: number;
+        }): Promise<SendMessageResult> {
+            let {
+                servicePrivateKey = serviceKeypair.secretKey,
+                devicePrivateKey = deviceKeypairs[0].secretKey,
+                deviceId = 0,
+            } = opts;
 
+            const res = await tFAExtension.sendDestruct({
+                servicePrivateKey,
+                devicePrivateKey,
+                deviceId,
+                seqno: await tFAExtension.getSeqno(),
+            });
+
+            return res;
+        }
+
+        it('should destruct', async () => {
+            const res = await destructTest({});
+
+            expect(res.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+
+            expect(res.transactions).toHaveTransaction({
+                from: tFAExtension.address,
+                to: walletV5.address,
+                success: true,
+                exitCode: 0,
+            });
+
+            let tfa_state = await blockchain.getContract(tFAExtension.address);
+            expect(tfa_state.accountState).toEqual(undefined);
+
+            expect(await walletV5.getIsSecretKeyAuthEnabled()).toEqual(true);
+            expect(await walletV5.getExtensionsArray()).toEqual([]);
+        });
+
+        it('should not destruct with wrong servicePrivateKey', async () => {
+            const randomNewKeypair = await randomKeypair();
+            await shouldFail(destructTest({ servicePrivateKey: randomNewKeypair.secretKey }));
+        });
+
+        it('should not destruct with wrong devicePrivateKey', async () => {
+            const randomNewKeypair = await randomKeypair();
+            await shouldFail(destructTest({ devicePrivateKey: randomNewKeypair.secretKey }));
+        });
+
+        it('should not destruct with wrong deviceId', async () => {
+            await shouldFail(destructTest({ deviceId: 1 }));
+        });
+
+        it('should not destruct device if recover process is started', async () => {
+            await tFAExtension.sendRecoverAccess({
+                servicePrivateKey: serviceKeypair.secretKey,
+                seedPrivateKey: seedKeypair.secretKey,
+                seqno: 1,
+                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
+                newDeviceId: 1,
+            });
+
+            await shouldFail(destructTest({}));
+        });
+    });
+
+    it('should recover access', async () => {
         const newDeviceKeypair = await randomKeypair();
         blockchain.now = Math.floor(Date.now() / 1000);
 
@@ -487,8 +572,6 @@ describe('TFAExtension', () => {
     });
 
     it('should cancel recover access', async () => {
-        await linkExtension();
-
         const newDeviceKeypair = await randomKeypair();
         blockchain.now = Math.floor(Date.now() / 1000);
 
@@ -561,8 +644,6 @@ describe('TFAExtension', () => {
 
         expect(await walletV5JettonWallet.getJettonBalance()).toEqual(toNano('1000'));
 
-        await linkExtension();
-
         let extensionSeqno = 1;
         async function test(receiver1: Address, receiver2: Address) {
             // ------ SEND TO EXTENSION ------
@@ -586,14 +667,6 @@ describe('TFAExtension', () => {
                             ),
                         }),
                     },
-                    // {
-                    //     type: 'sendMsg',
-                    //     mode: SendMode.PAY_GAS_SEPARATELY,
-                    //     outMsg: internal({
-                    //         to: tFAExtension.address,
-                    //         value: toNano('1'),
-                    //     }),
-                    // },
                 ],
             });
             const res = await tFAExtension.sendSendActions({
@@ -604,29 +677,46 @@ describe('TFAExtension', () => {
                 actionsList: actions,
             });
 
-            // expect(res.transactions).toHaveTransaction({
-            //     from: walletV5.address,
-            //     to: tFAExtension.address,
-            //     value: toNano('1.0'),
-            //     success: true,
-            // });
-
             {
-                const actions = walletV5.createRequest({
-                    seqno: await walletV5.getSeqno(),
-                    secretKey: walletKeypair.secretKey,
+                const walletV5_2_keypair = await randomKeypair();
+                const walletV5_2 = blockchain.openContract(
+                    WalletContractV5R1.create({
+                        publicKey: walletV5_2_keypair.publicKey,
+                    }),
+                );
+                await deployer.send({
+                    value: toNano('1000'),
+                    to: walletV5_2.address,
+                    bounce: false,
+                });
+                await walletV5_2.sendTransfer({
+                    seqno: await walletV5_2.getSeqno(),
+                    secretKey: walletV5_2_keypair.secretKey,
+                    authType: 'external',
+                    messages: [],
+                    sendMode: SendMode.NONE,
+                });
+                await jettonMinter.sendMint(deployer.getSender(), walletV5_2.address, toNano('1000'));
+
+                const walletV5_2JettonWallet = blockchain.openContract(
+                    JettonWallet.createFromAddress(await jettonMinter.getWalletAddress(walletV5_2.address)),
+                );
+
+                const actions = walletV5_2.createRequest({
+                    seqno: await walletV5_2.getSeqno(),
+                    secretKey: walletV5_2_keypair.secretKey,
                     authType: 'external',
                     actions: [
                         {
                             type: 'sendMsg',
                             mode: SendMode.PAY_GAS_SEPARATELY,
                             outMsg: internal({
-                                to: walletV5JettonWallet.address,
+                                to: walletV5_2JettonWallet.address,
                                 value: toNano('0.1'),
                                 body: JettonWallet.transferMessage(
                                     toNano('100'),
                                     receiver2,
-                                    walletV5.address,
+                                    walletV5_2.address,
                                     null,
                                     1n,
                                     beginCell().storeUint(10, 32).endCell(),
@@ -635,7 +725,7 @@ describe('TFAExtension', () => {
                         },
                     ],
                 });
-                const resSimple = await walletV5.send(actions);
+                const resSimple = await walletV5_2.send(actions);
                 const totalFeesSimple = resSimple.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
                 const totalFees = res.transactions.reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
 
