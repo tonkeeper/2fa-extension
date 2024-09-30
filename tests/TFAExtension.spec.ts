@@ -4,36 +4,27 @@ import {
     beginCell,
     Cell,
     Dictionary,
-    DictionaryValue,
     internal,
-    Sender,
     toNano,
     TransactionComputeVm,
     TransactionDescriptionGeneric,
 } from '@ton/core';
-import { OpCode, RecoverState, TFAExtension } from '../wrappers/TFAExtension';
+import { RecoverState, TFAExtension } from '../wrappers/TFAExtension';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { getSecureRandomBytes, KeyPair, keyPairFromSeed, sign } from '@ton/crypto';
-import { Opcodes, WalletV5 } from '../wrappers/WalletV5';
-import { ActionSendMsg, ExtendedAction, OutAction, packActionsList } from './wallet/wallet_v5_actions';
 import { SendMode } from '@ton/core';
-import { deployWallet, linkExtensionToWallet } from './wallet/WalletUtils';
-import { JettonMaster, WalletContractV5R1 } from '@ton/ton';
-import { MessageRelaxed } from '@ton/core/src/types/MessageRelaxed';
-import { Transaction } from '@ton/core';
-import { jettonContentToCell, JettonMinter } from '../notcoin-contract/wrappers/JettonMinter';
+import { WalletContractV5R1 } from '@ton/ton';
+import { JettonMinter } from '../notcoin-contract/wrappers/JettonMinter';
 import * as fs from 'fs';
 import { JettonWallet } from '../notcoin-contract/wrappers/JettonWallet';
 import { OutActionWalletV5 } from '@ton/ton/dist/wallets/v5beta/WalletV5OutActions';
 
 describe('TFAExtension', () => {
     let code: Cell;
-    let walletV5code: Cell;
 
     beforeAll(async () => {
         code = await compile('TFAExtension');
-        walletV5code = await compile('WalletV5');
     });
 
     let blockchain: Blockchain;
