@@ -592,52 +592,323 @@ describe('TFAExtension', () => {
         });
     });
 
-    it('should recover access', async () => {
-        const newDeviceKeypair = await randomKeypair();
-        blockchain.now = Math.floor(Date.now() / 1000);
+    describe('recover', () => {
+        async function recoverTest(opts: {
+            servicePrivateKey?: Buffer;
+            seedPrivateKey?: Buffer;
+            seqno?: number;
+            newDevicePubkey?: Buffer;
+            newDeviceId?: number;
+            validUntil?: number;
+        }): Promise<SendMessageResult> {
+            let {
+                servicePrivateKey = serviceKeypair.secretKey,
+                seedPrivateKey = seedKeypair.secretKey,
+                seqno = await tFAExtension.getSeqno(),
+                newDevicePubkey = null,
+                newDeviceId = 1,
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+            } = opts;
 
-        // ------ STEP 1 ------
-        const res = await tFAExtension.sendRecoverAccess({
-            servicePrivateKey: serviceKeypair.secretKey,
-            seedPrivateKey: seedKeypair.secretKey,
-            seqno: 1,
-            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
-            newDeviceId: 1,
-        });
+            if (newDevicePubkey === null) {
+                newDevicePubkey = (await randomKeypair()).publicKey;
+            }
 
-        expect(res.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
-        });
-        let state: RecoverState = await tFAExtension.getRecoverState();
-        if (state.type === 'requested') {
-            expect(state.newDeviceId).toEqual(1);
-            expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
-        } else {
-            fail('Expected requested state');
+            const res = await tFAExtension.sendRecoverAccess({
+                servicePrivateKey,
+                seedPrivateKey,
+                seqno,
+                newDevicePubkey: bufferToBigInt(newDevicePubkey),
+                newDeviceId,
+                validUntil,
+            });
+
+            return res;
         }
 
-        // ------ STEP 2 ------
-        blockchain.now += 60 * 60 * 24 * 3;
+        async function cancelTest(opts: {
+            servicePrivateKey?: Buffer;
+            seedPrivateKey?: Buffer;
+            seqno?: number;
+            validUntil?: number;
+        }): Promise<SendMessageResult> {
+            let {
+                servicePrivateKey = serviceKeypair.secretKey,
+                seedPrivateKey = seedKeypair.secretKey,
+                seqno = await tFAExtension.getSeqno(),
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+            } = opts;
 
-        const res2 = await tFAExtension.sendRecoverAccess({
-            servicePrivateKey: serviceKeypair.secretKey,
-            seedPrivateKey: seedKeypair.secretKey,
-            seqno: 2,
-            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
-            validUntil: blockchain.now + 180,
-            newDeviceId: 1,
+            const res = await tFAExtension.sendCancelRequest({
+                servicePrivateKey,
+                seedPrivateKey,
+                seqno,
+                validUntil,
+            });
+
+            return res;
+        }
+
+        it('should recover access', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            const res = await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            expect(res.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+            let state: RecoverState = await tFAExtension.getRecoverState();
+            if (state.type === 'requested') {
+                expect(state.newDeviceId).toEqual(1);
+                expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+            } else {
+                fail('Expected requested state');
+            }
+
+            // ------ STEP 2 ------
+            blockchain.now += 60 * 60 * 24 * 3;
+
+            const res2 = await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            expect(res2.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+
+            state = await tFAExtension.getRecoverState();
+            expect(state.type).toEqual('none');
+
+            expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
         });
 
-        expect(res2.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
+        it('should cancel recover access', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            // ------ STEP 2 ------
+            const res2 = await cancelTest({});
+
+            expect(res2.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+
+            let state = await tFAExtension.getRecoverState();
+            expect(state.type).toEqual('none');
         });
 
-        state = await tFAExtension.getRecoverState();
-        expect(state.type).toEqual('none');
+        it('should not recover after recover process is canceled', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
 
-        expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            // ------ STEP 2 ------
+            await cancelTest({});
+
+            // ------ STEP 3 ------
+            await shouldFail(
+                recoverTest({
+                    newDevicePubkey: newDeviceKeypair.publicKey,
+                    newDeviceId: 1,
+                    validUntil: blockchain.now + 180,
+                }),
+            );
+        });
+
+        it('should not recover if device pubkey is wrong on step 2', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            // ------ STEP 2 ------
+            await shouldFail(
+                recoverTest({
+                    newDevicePubkey: (await randomKeypair()).publicKey,
+                    newDeviceId: 1,
+                    validUntil: blockchain.now + 180,
+                }),
+            );
+        });
+
+        it('should not recover if device id is wrong on step 2', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            // ------ STEP 2 ------
+            await shouldFail(
+                recoverTest({
+                    newDevicePubkey: newDeviceKeypair.publicKey,
+                    newDeviceId: 2,
+                    validUntil: blockchain.now + 180,
+                }),
+            );
+        });
+
+        it('should not recover if servicePrivateKey is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+
+            await shouldFail(
+                recoverTest({
+                    servicePrivateKey: (await randomKeypair()).secretKey,
+                    newDevicePubkey: newDeviceKeypair.publicKey,
+                    newDeviceId: 1,
+                }),
+            );
+        });
+
+        it('should not recover if seedPrivateKey is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+
+            await shouldFail(
+                recoverTest({
+                    seedPrivateKey: (await randomKeypair()).secretKey,
+                    newDevicePubkey: newDeviceKeypair.publicKey,
+                    newDeviceId: 1,
+                }),
+            );
+        });
+
+        it('should not recover if seqno is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+
+            await shouldFail(
+                recoverTest({
+                    seqno: 0,
+                    newDevicePubkey: newDeviceKeypair.publicKey,
+                    newDeviceId: 1,
+                }),
+            );
+        });
+
+        it('should not recover if validUntil is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+
+            await shouldFail(
+                recoverTest({
+                    validUntil: Math.floor(Date.now() / 1000) - 1,
+                    newDevicePubkey: newDeviceKeypair.publicKey,
+                    newDeviceId: 1,
+                }),
+            );
+        });
+
+        it('should not recover before delay is over', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            // ------ STEP 2 ------
+            await shouldFail(
+                recoverTest({
+                    newDevicePubkey: newDeviceKeypair.publicKey,
+                    newDeviceId: 1,
+                    validUntil: blockchain.now + 180,
+                }),
+            );
+        });
+
+        it('should not cancel if recover is not started', async () => {
+            await shouldFail(cancelTest({}));
+        });
+
+        it('should not cancel if servicePrivateKey is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            await shouldFail(cancelTest({ servicePrivateKey: (await randomKeypair()).secretKey }));
+        });
+
+        it('should not cancel if seedPrivateKey is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            await shouldFail(cancelTest({ seedPrivateKey: (await randomKeypair()).secretKey }));
+        });
+
+        it('should not cancel if seqno is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            await shouldFail(cancelTest({ seqno: 0 }));
+        });
+
+        it('should not cancel if validUntil is wrong', async () => {
+            const newDeviceKeypair = await randomKeypair();
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // ------ STEP 1 ------
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            await shouldFail(cancelTest({ validUntil: blockchain.now - 1 }));
+        });
     });
 
     it('should cancel recover access', async () => {
