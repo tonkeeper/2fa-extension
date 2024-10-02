@@ -31,15 +31,15 @@ export function tFAPluginConfigToCell(config: TFAExtensionConfig): Cell {
 }
 
 export enum OpCode {
-    INSTALL = 125,
-    SEND_ACTIONS = 130,
-    AUTHORIZE_DEVICE = 131,
-    UNAUTHORIZE_DEVICE = 132,
-    RECOVER_ACCESS = 133,
-    CANCEL_REQUEST = 134,
-    DESTRUCT = 135,
-    DISABLE = 136,
-    CANCEL_DISABLING = 137,
+    INSTALL = 0x43563174,
+    SEND_ACTIONS = 0xb15f2c8c,
+    AUTHORIZE_DEVICE = 0x0a73fcb4,
+    UNAUTHORIZE_DEVICE = 0xa04d2666,
+    RECOVER_ACCESS = 0x59c538dd,
+    CANCEL_REQUEST = 0x30f0a407,
+    DESTRUCT = 0x9d8084d6,
+    DISABLE = 0x23d9c15c,
+    CANCEL_DISABLING = 0xde82b501,
 }
 
 export class TFAExtension implements Contract {

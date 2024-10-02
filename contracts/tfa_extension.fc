@@ -1,15 +1,15 @@
 #include "imports/stdlib.fc";
 #include "imports/shared.fc";
 
-const op::install = 125;
-const op::send_actions = 130;
-const op::authorize_device = 131;
-const op::unauthorize_device = 132;
-const op::recover_access = 133;
-const op::cancel_request = 134;
-const op::destruct = 135;
-const op::disable = 136;
-const op::cancel_disabling = 137;
+const op::install =            0x43563174;
+const op::send_actions =       0xb15f2c8c;
+const op::authorize_device =   0x0a73fcb4;
+const op::unauthorize_device = 0xa04d2666;
+const op::recover_access =     0x59c538dd;
+const op::cancel_request =     0x30f0a407;
+const op::destruct =           0x9d8084d6;
+const op::disable =            0x23d9c15c;
+const op::cancel_disabling =   0xde82b501;
 
 const one_ton = 1000000000;
 
