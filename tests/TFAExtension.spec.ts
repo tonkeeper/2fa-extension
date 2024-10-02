@@ -9,7 +9,7 @@ import {
     TransactionComputeVm,
     TransactionDescriptionGeneric,
 } from '@ton/core';
-import { RecoverState, TFAExtension } from '../wrappers/TFAExtension';
+import { DisableState, RecoverState, TFAExtension } from '../wrappers/TFAExtension';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { getSecureRandomBytes, KeyPair, keyPairFromSeed, sign } from '@ton/crypto';
@@ -19,6 +19,7 @@ import { JettonMinter } from '../notcoin-contract/wrappers/JettonMinter';
 import * as fs from 'fs';
 import { JettonWallet } from '../notcoin-contract/wrappers/JettonWallet';
 import { OutActionWalletV5 } from '@ton/ton/dist/wallets/v5beta/WalletV5OutActions';
+import { storeWalletIdV5R1 } from '@ton/ton/dist/wallets/v5r1/WalletV5R1WalletId';
 
 describe('TFAExtension', () => {
     let code: Cell;
@@ -911,45 +912,192 @@ describe('TFAExtension', () => {
         });
     });
 
-    it('should cancel recover access', async () => {
-        const newDeviceKeypair = await randomKeypair();
-        blockchain.now = Math.floor(Date.now() / 1000);
+    describe('disable', () => {
+        let newWalletKeypair: KeyPair;
+        let newWallet: WalletContractV5R1;
+        let newWalletStateInit: Cell;
 
-        // ------ STEP 1 ------
-        const res = await tFAExtension.sendRecoverAccess({
-            servicePrivateKey: serviceKeypair.secretKey,
-            seedPrivateKey: seedKeypair.secretKey,
-            seqno: 1,
-            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
-            newDeviceId: 1,
+        beforeEach(async () => {
+            newWalletKeypair = await randomKeypair();
+            newWallet = WalletContractV5R1.create({
+                publicKey: newWalletKeypair.publicKey,
+            });
+            newWalletStateInit = beginCell()
+                .storeUint(0, 2)
+                .storeMaybeRef(newWallet.init.code)
+                .storeMaybeRef(newWallet.init.data)
+                .storeUint(0, 1)
+                .endCell();
         });
 
-        expect(res.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
-        });
-        let state: RecoverState = await tFAExtension.getRecoverState();
-        if (state.type === 'requested') {
-            expect(state.newDeviceId).toEqual(1);
-            expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
-        } else {
-            fail('Expected requested state');
+        async function disableTest(opts: {
+            newStateInit?: Cell;
+            forwardAmount?: bigint;
+            seedPrivateKey?: Buffer;
+            validUntil?: number;
+            seqno?: number;
+        }): Promise<SendMessageResult> {
+            let {
+                seedPrivateKey = seedKeypair.secretKey,
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+                seqno = await tFAExtension.getSeqno(),
+                newStateInit = newWalletStateInit,
+                forwardAmount = toNano('0.3'),
+            } = opts;
+
+            const res = await tFAExtension.sendDisable({
+                seedPrivateKey,
+                seqno,
+                validUntil,
+                newStateInit,
+                forwardAmount,
+            });
+
+            return res;
         }
 
-        // ------ STEP 2 ------
-        const res2 = await tFAExtension.sendCancelRequest({
-            servicePrivateKey: serviceKeypair.secretKey,
-            seedPrivateKey: seedKeypair.secretKey,
-            seqno: 2,
+        async function cancelTest(opts: {
+            seedPrivateKey?: Buffer;
+            seqno?: number;
+            validUntil?: number;
+        }): Promise<SendMessageResult> {
+            let {
+                seedPrivateKey = seedKeypair.secretKey,
+                seqno = await tFAExtension.getSeqno(),
+                validUntil = Math.floor(Date.now() / 1000) + 180,
+            } = opts;
+
+            const res = await tFAExtension.sendCancelDisabling({
+                seedPrivateKey,
+                seqno,
+                validUntil,
+            });
+
+            return res;
+        }
+
+        it('should disable', async () => {
+            blockchain.now = Math.floor(Date.now() / 1000);
+            const res = await disableTest({});
+
+            // STEP 1
+            expect(res.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+
+            const state: DisableState = await tFAExtension.getDisableState();
+            if (state.type === 'disabling') {
+                expect(state.newStateInit).toEqualCell(newWalletStateInit);
+                expect(state.forwardAmount).toEqual(toNano('0.3'));
+            } else {
+                fail('Expected disabling state');
+            }
+
+            // STEP 2
+            blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 3;
+            const res2 = await disableTest({ validUntil: blockchain.now + 180 });
+
+            expect(res2.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+
+            expect(res2.transactions).toHaveTransaction({
+                from: tFAExtension.address,
+                to: walletV5.address,
+                success: true,
+            });
+
+            let walletState = await blockchain.getContract(newWallet.address);
+            expect(walletState.accountState?.type).toEqual('active');
+
+            let tfaState = await blockchain.getContract(tFAExtension.address);
+            expect(tfaState.accountState).toEqual(undefined);
+
+            let extensions: Address[] = await walletV5.getExtensionsArray();
+
+            expect(extensions[0]).toEqualAddress(newWallet.address);
+            expect(extensions.length).toEqual(1);
         });
 
-        expect(res2.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
+        it('should cancel disabling', async () => {
+            blockchain.now = Math.floor(Date.now() / 1000);
+
+            // STEP 1
+            await disableTest({});
+
+            // STEP 2
+            const res2 = await cancelTest({});
+
+            expect(res2.transactions).toHaveTransaction({
+                to: tFAExtension.address,
+                success: true,
+            });
+
+            let state = await tFAExtension.getDisableState();
+            expect(state.type).toEqual('none');
         });
 
-        state = await tFAExtension.getRecoverState();
-        expect(state.type).toEqual('none');
+        it('should not disable if seedPrivateKey is wrong', async () => {
+            await shouldFail(disableTest({ seedPrivateKey: (await randomKeypair()).secretKey }));
+        });
+
+        it('should not disable if seqno is wrong', async () => {
+            await shouldFail(disableTest({ seqno: 0 }));
+        });
+
+        it('should not disable if validUntil is wrong', async () => {
+            await shouldFail(disableTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
+        });
+
+        it('should not disable if state init is wrong on step 2', async () => {
+            // STEP 1
+            blockchain.now = Math.floor(Date.now() / 1000);
+            await disableTest({});
+
+            // STEP 2
+            blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 3;
+            await shouldFail(disableTest({ newStateInit: beginCell().storeUint(0, 2).endCell() }));
+        });
+
+        it('should not disable if forwardAmount is wrong on step 2', async () => {
+            // STEP 1
+            blockchain.now = Math.floor(Date.now() / 1000);
+            await disableTest({});
+
+            // STEP 2
+            blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 3;
+            await shouldFail(disableTest({ forwardAmount: toNano('0.4') }));
+        });
+
+        it('should not cancel if disabling is not started', async () => {
+            await shouldFail(cancelTest({}));
+        });
+
+        it('should not cancel if seedPrivateKey is wrong', async () => {
+            // STEP 1
+            blockchain.now = Math.floor(Date.now() / 1000);
+            await disableTest({});
+
+            await shouldFail(cancelTest({ seedPrivateKey: (await randomKeypair()).secretKey }));
+        });
+
+        it('should not cancel if seqno is wrong', async () => {
+            // STEP 1
+            blockchain.now = Math.floor(Date.now() / 1000);
+            await disableTest({});
+
+            await shouldFail(cancelTest({ seqno: 0 }));
+        });
+
+        it('should not cancel if validUntil is wrong', async () => {
+            // STEP 1
+            blockchain.now = Math.floor(Date.now() / 1000);
+            await disableTest({});
+
+            await shouldFail(cancelTest({ validUntil: Math.floor(Date.now() / 1000) - 3 }));
+        });
     });
 
     it('test transfer tokens fees', async () => {

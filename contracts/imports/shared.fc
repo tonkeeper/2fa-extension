@@ -35,16 +35,21 @@ builder store_out_action_list(builder b, cell action_list) inline {
     return b.store_maybe_ref(action_list);
 }
 
-builder store_add_ext_action(builder b, slice extension_addr, cell next_action) inline {
+builder store_add_ext_action_continue(builder b, slice extension_addr, cell next_action) inline {
     return b.store_uint(wallet::extended_action::add_ext, 8)
         .store_slice(extension_addr)
-        .store_maybe_ref(next_action);
+        .store_ref(next_action);
 }
 
 builder store_delete_ext_action(builder b, slice extension_addr, cell next_action) inline {
     return b.store_uint(wallet::extended_action::delete_ext, 8)
         .store_slice(extension_addr)
         .store_maybe_ref(next_action);
+}
+
+builder store_delete_ext_action_end(builder b, slice extension_addr) inline {
+    return b.store_uint(wallet::extended_action::delete_ext, 8)
+        .store_slice(extension_addr);
 }
 
 builder store_set_signature_auth(builder b, int allow, cell next_action) inline {
@@ -72,4 +77,13 @@ cell new_empty_out_action_list() inline {
 builder store_action_list_basic(builder b, cell action) inline {
     return b.store_uint(0, 1) ;; action_list_basic$0
         .store_ref(action);
+}
+
+slice calculate_address(int wc, cell state_init) inline {
+    return begin_cell()
+        .store_uint(4, 3) ;; 0b100 = addr_std$10 tag; No anycast
+        .store_int(wc, 8)
+        .store_uint(cell_hash(state_init), 256)
+        .end_cell()
+        .begin_parse();
 }

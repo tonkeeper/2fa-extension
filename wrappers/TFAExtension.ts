@@ -25,7 +25,7 @@ export function tFAPluginConfigToCell(config: TFAExtensionConfig): Cell {
         .storeUint(0, 256)
         .storeUint(0, 256)
         .storeDict()
-        .storeUint(0, 1)
+        .storeUint(0, 2)
         .storeUint(0, 64)
         .endCell();
 }
@@ -38,6 +38,8 @@ export enum OpCode {
     RECOVER_ACCESS = 133,
     CANCEL_REQUEST = 134,
     DESTRUCT = 135,
+    DISABLE = 136,
+    CANCEL_DISABLING = 137,
 }
 
 export class TFAExtension implements Contract {
@@ -156,6 +158,28 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
+    async sendDisable(provider: ContractProvider, opts: DisableOpts) {
+        const body = packSeedBody(
+            opts.seedPrivateKey,
+            opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
+            OpCode.DISABLE,
+            beginCell().storeRef(opts.newStateInit).storeCoins(opts.forwardAmount),
+        );
+        await this.sendExternal(provider, body);
+    }
+
+    async sendCancelDisabling(provider: ContractProvider, opts: CancelDisablingOpts) {
+        const body = packSeedBody(
+            opts.seedPrivateKey,
+            opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
+            OpCode.CANCEL_DISABLING,
+            beginCell(),
+        );
+        await this.sendExternal(provider, body);
+    }
+
     async sendExternal(provider: ContractProvider, body: Cell) {
         await provider.external(body);
     }
@@ -201,11 +225,6 @@ export class TFAExtension implements Contract {
         const recoveryState = stack.readNumber();
 
         switch (recoveryState) {
-            case 0:
-                return {
-                    type: 'none',
-                    recoveryBlockedUntil: stack.readNumber(),
-                };
             case 1:
                 return {
                     type: 'requested',
@@ -214,7 +233,31 @@ export class TFAExtension implements Contract {
                     newDevicePubkey: stack.readBigNumber(),
                 };
             default:
-                throw new Error(`Unknown recovery state: ${recoveryState}`);
+                return {
+                    type: 'none',
+                    recoveryBlockedUntil: stack.readNumber(),
+                };
+        }
+    }
+
+    async getDisableState(provider: ContractProvider): Promise<DisableState> {
+        const res = await provider.get('get_disable_state', []);
+        const stack = res.stack;
+        const disableState = stack.readNumber();
+
+        switch (disableState) {
+            case 2:
+                return {
+                    type: 'disabling',
+                    disablingBlockedUntil: stack.readNumber(),
+                    newStateInit: stack.readCell(),
+                    forwardAmount: stack.readBigNumber(),
+                };
+            default:
+                return {
+                    type: 'none',
+                    disablingBlockedUntil: stack.readNumber(),
+                };
         }
     }
 }
@@ -231,6 +274,18 @@ export type RecoverState =
           recoveryBlockedUntil: number;
       };
 
+export type DisableState =
+    | {
+          type: 'disabling';
+          disablingBlockedUntil: number;
+          newStateInit: Cell;
+          forwardAmount: bigint;
+      }
+    | {
+          type: 'none';
+          disablingBlockedUntil: number;
+      };
+
 export type TFAAuthDevice = {
     servicePrivateKey: Buffer;
     devicePrivateKey: Buffer;
@@ -241,6 +296,12 @@ export type TFAAuthDevice = {
 
 export type TFAAuthSeed = {
     servicePrivateKey: Buffer;
+    seedPrivateKey: Buffer;
+    seqno: number;
+    validUntil?: number;
+};
+
+export type AuthSeed = {
     seedPrivateKey: Buffer;
     seqno: number;
     validUntil?: number;
@@ -267,6 +328,13 @@ export type RecoverAccessOpts = TFAAuthSeed & {
 export type CancelRequestOpts = TFAAuthSeed;
 
 export type DestructOpts = TFAAuthDevice;
+
+export type DisableOpts = AuthSeed & {
+    newStateInit: Cell;
+    forwardAmount: bigint;
+};
+
+export type CancelDisablingOpts = AuthSeed;
 
 export function packTFABody(
     servicePrivateKey: Buffer,
@@ -307,6 +375,21 @@ export function packTFASeedBody(
         .storeBuffer(signature1)
         .storeRef(beginCell().storeBuffer(signature2))
         .storeSlice(dataToSign.beginParse());
+
+    return body.endCell();
+}
+
+export function packSeedBody(
+    seedPrivateKey: Buffer,
+    seqno: number,
+    validUntil: number,
+    opCode: OpCode,
+    payload: Builder,
+): Cell {
+    const dataToSign = beginCell().storeUint(seqno, 32).storeUint(validUntil, 64).storeBuilder(payload).endCell();
+    const signature = sign(dataToSign.hash(), seedPrivateKey);
+
+    const body = beginCell().storeUint(opCode, 32).storeBuffer(signature).storeSlice(dataToSign.beginParse());
 
     return body.endCell();
 }

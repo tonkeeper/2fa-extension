@@ -8,8 +8,8 @@ const op::unauthorize_device = 132;
 const op::recover_access = 133;
 const op::cancel_request = 134;
 const op::destruct = 135;
-
-cell get_wallet_v5_code() asm "<b 2 8 u, 0xe4cf3b2f4c6d6a61ea0f2b5447d266785b26af3637db2deee6bcd1aa826f3412 256 u, b>spec PUSHREF";
+const op::disable = 136;
+const op::cancel_disabling = 137;
 
 const one_ton = 1000000000;
 
@@ -21,7 +21,7 @@ const one_ton = 1000000000;
         ds~load_uint(256),
         ds~load_uint(256),
         ds~load_dict(),
-        ds~load_uint(1),
+        ds~load_uint(2),
         ds
     );
 }
@@ -32,8 +32,8 @@ const one_ton = 1000000000;
     int service_pubkey,
     int seed_pubkey,
     cell device_pubkeys,
-    int recover_state_,
-    slice recover_state
+    int state_,
+    slice state
 ) impure inline {
     set_data(
         begin_cell()
@@ -42,8 +42,8 @@ const one_ton = 1000000000;
             .store_uint(service_pubkey, 256)
             .store_uint(seed_pubkey, 256)
             .store_dict(device_pubkeys)
-            .store_uint(recover_state_, 1)
-            .store_slice(recover_state)
+            .store_uint(state_, 2)
+            .store_slice(state)
             .end_cell()
     );
 }
@@ -66,7 +66,7 @@ const one_ton = 1000000000;
         int service_pubkey,
         int seed_pubkey,
         cell device_pubkeys,
-        int recover_state,
+        int state,
         slice rest_state
     ) = load_data();
 
@@ -84,7 +84,7 @@ const one_ton = 1000000000;
             new_service_pubkey,
             new_seed_pubkey,
             new_device_pubkeys,
-            recover_state,
+            state,
             rest_state
         );
 
@@ -161,6 +161,21 @@ const one_ton = 1000000000;
     return (cs, ());
 }
 
+(slice, ()) check_seed_auth(slice cs, int seed_pubkey, int stored_seqno) impure inline {
+    slice seed_signature = cs~load_bits(512);
+    int root_hash = slice_hash(cs);
+
+    throw_unless(35, check_signature(root_hash, seed_signature, seed_pubkey));
+
+    int seqno = cs~load_uint(32);
+    throw_unless(37, seqno == stored_seqno);
+
+    int valid_until = cs~load_uint(64);
+    throw_unless(38, valid_until >= now());
+
+    return (cs, ());
+}
+
 () recv_external(slice in_msg) impure {
     int op = in_msg~load_uint(32);
 
@@ -173,11 +188,11 @@ const one_ton = 1000000000;
     int service_pubkey = ds~load_uint(256);
     int seed_pubkey = ds~load_uint(256);
     cell device_pubkeys = ds~load_dict();
-    int recover_state = ds~load_uint(1);
+    int state = ds~load_uint(2);
     slice rest_state = ds;
 
     if (op == op::send_actions) {
-        throw_if(38, recover_state);
+        throw_if(38, state);
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
         accept_message();
 
@@ -204,7 +219,7 @@ const one_ton = 1000000000;
     }
 
     if (op == op::authorize_device) {
-        throw_if(38, recover_state);
+        throw_if(38, state);
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
 
         int new_device_pubkey_id = in_msg~load_uint(32);
@@ -230,7 +245,7 @@ const one_ton = 1000000000;
     }
 
     if (op == op::unauthorize_device) {
-        throw_unless(32, recover_state == 0);
+        throw_if(38, state);
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
 
         int device_pubkey_id = in_msg~load_uint(32);
@@ -259,7 +274,7 @@ const one_ton = 1000000000;
         int recovery_blocked_until = rest_state~load_uint(64);
         throw_unless(33, recovery_blocked_until <= now());
 
-        if (recover_state == 0) {
+        if (state == 0) {
             accept_message();
 
             int new_device_pubkey = in_msg~load_uint(256);
@@ -285,7 +300,7 @@ const one_ton = 1000000000;
                 1,
                 new_recovery_state
             );
-        } else {
+        } elseif (state == 1) {
             slice added_info = rest_state~load_ref().begin_parse();
 
             slice new_device_pubkey = added_info~load_bits(256);
@@ -308,6 +323,8 @@ const one_ton = 1000000000;
                 0,
                 begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
             );
+        } else {
+            throw(39);
         }
 
         return ();
@@ -316,7 +333,7 @@ const one_ton = 1000000000;
     if (op == op::cancel_request) {
         in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
 
-        throw_unless(32, recover_state == 1);
+        throw_unless(32, state == 1);
         accept_message();
 
         save_state(
@@ -335,7 +352,7 @@ const one_ton = 1000000000;
     if (op == op::destruct) {
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
 
-        throw_unless(32, recover_state == 0);
+        throw_unless(32, state == 0);
         accept_message();
 
         var msg = begin_cell()
@@ -362,7 +379,111 @@ const one_ton = 1000000000;
 
         send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
         return ();
-     }
+    }
+
+    if (op == op::disable) {
+        in_msg~check_seed_auth(seed_pubkey, seqno);
+
+        int recovery_blocked_until = rest_state~load_uint(64);
+        throw_unless(33, recovery_blocked_until <= now());
+
+        if (state == 0) {
+            accept_message();
+
+            cell new_state_init = in_msg~load_ref();
+            int forward_amount = in_msg~load_coins();
+
+            slice new_recovery_state = begin_cell()
+                .store_uint(now() + 60 * 60 * 24 * 3, 64) ;; recovery_blocked_until
+                .store_ref(new_state_init)
+                .store_coins(forward_amount)
+                .end_cell()
+                .begin_parse();
+
+            save_state(
+                seqno + 1,
+                wallet_addr,
+                service_pubkey,
+                seed_pubkey,
+                device_pubkeys,
+                2,
+                new_recovery_state
+            );
+        } elseif (state == 2) {
+            cell new_state_init = rest_state~load_ref();
+            int forward_amount = rest_state~load_coins();
+
+            throw_unless(35, cell_hash(new_state_init) == cell_hash(in_msg~load_ref()));
+            throw_unless(36, forward_amount == in_msg~load_coins());
+
+            accept_message();
+
+            save_state(
+                seqno + 1,
+                wallet_addr,
+                service_pubkey,
+                seed_pubkey,
+                device_pubkeys,
+                0,
+                begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+            );
+
+            slice new_extension_address = calculate_address(0, new_state_init);
+
+            var msg = begin_cell()
+                .store_nonbounce_flags()
+                .store_slice(wallet_addr)
+                .store_coins(0)
+                .store_ref_body(
+                    begin_cell()
+                    .store_uint(op::wallet::request_by_extension, 32)
+                    .store_uint(0, 64)
+                    .store_out_action_list(
+                        new_out_action_send_msg(
+                            begin_cell().end_cell(),
+                            0,
+                            begin_cell()
+                                .store_nonbounce_flags()
+                                .store_slice(new_extension_address)
+                                .store_coins(forward_amount)
+                                .store_uint(4 + 2, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+                                .store_ref(new_state_init)
+                                .end_cell()
+                        )
+                    )
+                    .store_uint(1, 1)
+                    .store_add_ext_action_continue(
+                        new_extension_address,
+                        begin_cell().store_delete_ext_action_end(my_address()).end_cell()
+                    )
+                    .end_cell()
+                );
+
+
+            send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
+        } else {
+            throw(39);
+        }
+    }
+
+    if (op == op::cancel_disabling) {
+        in_msg~check_seed_auth(seed_pubkey, seqno);
+
+        throw_unless(32, state == 2);
+        accept_message();
+
+        save_state(
+            seqno + 1,
+            wallet_addr,
+            service_pubkey,
+            seed_pubkey,
+            device_pubkeys,
+            0,
+            begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+        );
+
+        return ();
+    }
 }
 
 ;; GET METHODS
@@ -456,8 +577,9 @@ int get_device_pubkey(int device_pubkey_id) method_id {
         int recover_state,
         slice rest_state
     ) = load_data();
+    int recovery_blocked_until = rest_state~load_uint(64);
+
     if (recover_state == 1) {
-        int recovery_blocked_until = rest_state~load_uint(64);
         slice added_info = rest_state~load_ref().begin_parse();
 
         int new_device_pubkey = added_info~load_uint(256);
@@ -465,8 +587,28 @@ int get_device_pubkey(int device_pubkey_id) method_id {
 
         return (1, recovery_blocked_until, new_device_pubkey_id, new_device_pubkey);
     } else {
-        int recovery_blocked_until = rest_state~load_uint(64);
+        return (recover_state, recovery_blocked_until, 0, 0);
+    }
+}
 
-        return (0, recovery_blocked_until, 0, 0);
+(int, int, cell, int) get_disable_state() method_id {
+    (
+        int seqno,
+        slice wallet_addr,
+        int service_pubkey,
+        int seed_pubkey,
+        cell device_pubkeys,
+        int recover_state,
+        slice rest_state
+    ) = load_data();
+    int recovery_blocked_until = rest_state~load_uint(64);
+
+    if (recover_state == 2) {
+        cell new_state_init = rest_state~load_ref();
+        int forward_amount = rest_state~load_coins();
+
+        return (2, recovery_blocked_until, new_state_init, forward_amount);
+    } else {
+        return (recover_state, recovery_blocked_until, null(), 0);
     }
 }
