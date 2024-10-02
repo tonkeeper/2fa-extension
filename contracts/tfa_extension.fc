@@ -13,6 +13,22 @@ const op::cancel_disabling =   0xde82b501;
 
 const one_ton = 1000000000;
 
+const err::extension_already_installed = 160;
+const err::sender_is_not_owner = 161;
+const err::wrong_service_signature = 162;
+const err::wrong_device_signature = 163;
+const err::wrong_seed_signature = 164;
+const err::wrong_seqno = 165;
+const err::expired = 166;
+const err::recovery_or_disabling_in_progress = 167;
+const err::device_already_authorized = 168;
+const err::device_not_found = 169;
+const err::action_timeout = 170;
+const err::mismatched_data = 171;
+const err::wrong_state = 172;
+const err::no_recovery_initiated = 173;
+const err::no_disabling_initiated = 174;
+
 (int, slice, int, int, cell, int, slice) load_data() inline {
     var ds = get_data().begin_parse();
     return (
@@ -71,8 +87,8 @@ const one_ton = 1000000000;
     ) = load_data();
 
     if (op == op::install) {
-        throw_unless(35, seqno == 0);
-        throw_unless(36, equal_slices(sender, wallet_addr));
+        throw_unless(err::extension_already_installed, seqno == 0);
+        throw_unless(err::sender_is_not_owner, equal_slices(sender, wallet_addr));
 
         int new_service_pubkey = in_msg_body~load_uint(256);
         int new_seed_pubkey = in_msg_body~load_uint(256);
@@ -126,17 +142,20 @@ const one_ton = 1000000000;
     (slice device_pubkey_slice, int found?) = device_pubkeys.udict_get?(32, device_pubkey_id);
     int device_pubkey = device_pubkey_slice.preload_uint(256);
     throw_unless(
-        33,
+        err::wrong_device_signature,
         check_signature(root_hash, device_signature, device_pubkey)
     );
 
-    throw_unless(32, check_signature(root_hash, service_signature, service_pubkey));
+    throw_unless(
+        err::wrong_service_signature,
+        check_signature(root_hash, service_signature, service_pubkey)
+    );
 
     int seqno = cs~load_uint(32);
     int valid_until = cs~load_uint(64);
 
-    throw_unless(34, seqno == stored_seqno);
-    throw_unless(38, valid_until >= now());
+    throw_unless(err::wrong_seqno, seqno == stored_seqno);
+    throw_unless(err::expired, valid_until >= now());
 
     return (cs, ());
 }
@@ -149,14 +168,20 @@ const one_ton = 1000000000;
 
     int root_hash = slice_hash(cs);
 
-    throw_unless(35, check_signature(root_hash, service_signature, service_pubkey));
-    throw_unless(36, check_signature(root_hash, seed_signature, seed_pubkey));
+    throw_unless(
+        err::wrong_service_signature,
+        check_signature(root_hash, service_signature, service_pubkey)
+    );
+    throw_unless(
+        err::wrong_seed_signature,
+        check_signature(root_hash, seed_signature, seed_pubkey)
+    );
 
     int seqno = cs~load_uint(32);
-    throw_unless(37, seqno == stored_seqno);
+    throw_unless(err::wrong_seqno, seqno == stored_seqno);
 
     int valid_until = cs~load_uint(64);
-    throw_unless(38, valid_until >= now());
+    throw_unless(err::expired, valid_until >= now());
 
     return (cs, ());
 }
@@ -165,13 +190,13 @@ const one_ton = 1000000000;
     slice seed_signature = cs~load_bits(512);
     int root_hash = slice_hash(cs);
 
-    throw_unless(35, check_signature(root_hash, seed_signature, seed_pubkey));
+    throw_unless(err::wrong_seed_signature, check_signature(root_hash, seed_signature, seed_pubkey));
 
     int seqno = cs~load_uint(32);
-    throw_unless(37, seqno == stored_seqno);
+    throw_unless(err::wrong_seqno, seqno == stored_seqno);
 
     int valid_until = cs~load_uint(64);
-    throw_unless(38, valid_until >= now());
+    throw_unless(err::expired, valid_until >= now());
 
     return (cs, ());
 }
@@ -192,7 +217,7 @@ const one_ton = 1000000000;
     slice rest_state = ds;
 
     if (op == op::send_actions) {
-        throw_if(38, state);
+        throw_if(err::recovery_or_disabling_in_progress, state);
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
         accept_message();
 
@@ -219,7 +244,7 @@ const one_ton = 1000000000;
     }
 
     if (op == op::authorize_device) {
-        throw_if(38, state);
+        throw_if(err::recovery_or_disabling_in_progress, state);
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
 
         int new_device_pubkey_id = in_msg~load_uint(32);
@@ -227,7 +252,7 @@ const one_ton = 1000000000;
 
         (cell new_device_pubkeys, int added?) = device_pubkeys.udict_add?(32, new_device_pubkey_id, new_device_pubkey);
 
-        throw_unless(34, added?);
+        throw_unless(err::device_already_authorized, added?);
 
         accept_message();
 
@@ -245,13 +270,13 @@ const one_ton = 1000000000;
     }
 
     if (op == op::unauthorize_device) {
-        throw_if(38, state);
+        throw_if(err::recovery_or_disabling_in_progress, state);
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
 
         int device_pubkey_id = in_msg~load_uint(32);
         (cell new_device_pubkeys, int deleted?) = device_pubkeys.udict_delete?(32, device_pubkey_id);
 
-        throw_unless(34, deleted?);
+        throw_unless(err::device_not_found, deleted?);
 
         accept_message();
 
@@ -272,7 +297,7 @@ const one_ton = 1000000000;
         in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
 
         int recovery_blocked_until = rest_state~load_uint(64);
-        throw_unless(33, recovery_blocked_until <= now());
+        throw_unless(err::action_timeout, recovery_blocked_until <= now());
 
         if (state == 0) {
             accept_message();
@@ -306,8 +331,8 @@ const one_ton = 1000000000;
             slice new_device_pubkey = added_info~load_bits(256);
             int new_device_pubkey_id = added_info~load_uint(32);
 
-            throw_unless(35, equal_slices(new_device_pubkey, in_msg~load_bits(256)));
-            throw_unless(36, new_device_pubkey_id == in_msg~load_uint(32));
+            throw_unless(err::mismatched_data, equal_slices(new_device_pubkey, in_msg~load_bits(256)));
+            throw_unless(err::mismatched_data, new_device_pubkey_id == in_msg~load_uint(32));
 
             accept_message();
 
@@ -324,7 +349,7 @@ const one_ton = 1000000000;
                 begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
             );
         } else {
-            throw(39);
+            throw(err::wrong_state);
         }
 
         return ();
@@ -333,7 +358,7 @@ const one_ton = 1000000000;
     if (op == op::cancel_request) {
         in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
 
-        throw_unless(32, state == 1);
+        throw_unless(err::no_recovery_initiated, state == 1);
         accept_message();
 
         save_state(
@@ -352,7 +377,7 @@ const one_ton = 1000000000;
     if (op == op::destruct) {
         in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
 
-        throw_unless(32, state == 0);
+        throw_unless(err::recovery_or_disabling_in_progress, state == 0);
         accept_message();
 
         var msg = begin_cell()
@@ -385,7 +410,7 @@ const one_ton = 1000000000;
         in_msg~check_seed_auth(seed_pubkey, seqno);
 
         int recovery_blocked_until = rest_state~load_uint(64);
-        throw_unless(33, recovery_blocked_until <= now());
+        throw_unless(err::action_timeout, recovery_blocked_until <= now());
 
         if (state == 0) {
             accept_message();
@@ -413,8 +438,8 @@ const one_ton = 1000000000;
             cell new_state_init = rest_state~load_ref();
             int forward_amount = rest_state~load_coins();
 
-            throw_unless(35, cell_hash(new_state_init) == cell_hash(in_msg~load_ref()));
-            throw_unless(36, forward_amount == in_msg~load_coins());
+            throw_unless(err::mismatched_data, cell_hash(new_state_init) == cell_hash(in_msg~load_ref()));
+            throw_unless(err::mismatched_data, forward_amount == in_msg~load_coins());
 
             accept_message();
 
@@ -462,14 +487,14 @@ const one_ton = 1000000000;
 
             send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
         } else {
-            throw(39);
+            throw(err::wrong_state);
         }
     }
 
     if (op == op::cancel_disabling) {
         in_msg~check_seed_auth(seed_pubkey, seqno);
 
-        throw_unless(32, state == 2);
+        throw_unless(err::no_disabling_initiated, state == 2);
         accept_message();
 
         save_state(
