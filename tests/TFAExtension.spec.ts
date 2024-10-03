@@ -1100,7 +1100,7 @@ describe('TFAExtension', () => {
         });
     });
 
-    it('test transfer tokens fees', async () => {
+    async function createJettonMinter() {
         // ------ PREPARE JETTONS ------
         const minter_code = loadNotcoinCode('./notcoin-contract/build/JettonMinter.compiled.json');
         const jwallet_code_raw = loadNotcoinCode('./notcoin-contract/build/JettonWallet.compiled.json');
@@ -1123,6 +1123,12 @@ describe('TFAExtension', () => {
             ),
         );
         await jettonMinter.sendDeploy(deployer.getSender(), toNano('10'));
+
+        return jettonMinter;
+    }
+
+    it('test transfer tokens fees', async () => {
+        const jettonMinter = await createJettonMinter();
 
         const walletV5JettonWallet = blockchain.openContract(
             JettonWallet.createFromAddress(await jettonMinter.getWalletAddress(walletV5.address)),
@@ -1228,6 +1234,66 @@ describe('TFAExtension', () => {
         const receiver2 = await blockchain.treasury('receiver2');
 
         await test(receiver1.address, receiver2.address);
+    });
+
+    it('test 255 transfer tokens fees', async () => {
+        const jettonMinter = await createJettonMinter();
+
+        const walletV5JettonWallet = blockchain.openContract(
+            JettonWallet.createFromAddress(await jettonMinter.getWalletAddress(walletV5.address)),
+        );
+
+        await jettonMinter.sendMint(deployer.getSender(), walletV5.address, toNano('1000'));
+
+        expect(await walletV5JettonWallet.getJettonBalance()).toEqual(toNano('1000'));
+
+        async function test(receiver: Address) {
+            const actionsList: OutActionWalletV5[] = [];
+            for (let i = 0; i < 255; i++) {
+                actionsList.push({
+                    type: 'sendMsg',
+                    mode: SendMode.PAY_GAS_SEPARATELY,
+                    outMsg: internal({
+                        to: walletV5JettonWallet.address,
+                        value: toNano('0.15'),
+                        body: JettonWallet.transferMessage(
+                            toNano('1'),
+                            receiver,
+                            walletV5.address,
+                            null,
+                            1n,
+                            beginCell().storeUint(10, 32).endCell(),
+                        ),
+                    }),
+                });
+            }
+
+            // ------ SEND TO EXTENSION ------
+            const actions = walletV5.createRequest({
+                seqno: 2,
+                authType: 'extension',
+                actions: actionsList,
+            });
+            const res = await tFAExtension.sendSendActions({
+                servicePrivateKey: serviceKeypair.secretKey,
+                devicePrivateKey: deviceKeypairs[0].secretKey,
+                deviceId: 0,
+                seqno: 1,
+                actionsList: actions,
+            });
+            expect(res.transactions).toHaveTransaction({
+                from: tFAExtension.address,
+                to: walletV5.address,
+                success: true,
+            });
+
+            const totalFees = res.transactions.slice(0, 2).reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
+            console.log(`[255 Transfers] Total fees: ${Number(totalFees) / 1000000000}`);
+        }
+
+        const receiver = await blockchain.treasury('receiver1');
+
+        await test(receiver.address);
     });
 });
 
