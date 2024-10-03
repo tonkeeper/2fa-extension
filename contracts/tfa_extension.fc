@@ -11,8 +11,6 @@ const op::destruct =           0x9d8084d6;
 const op::disable =            0x23d9c15c;
 const op::cancel_disabling =   0xde82b501;
 
-const one_ton = 1000000000;
-
 const err::extension_already_installed = 160;
 const err::sender_is_not_owner = 161;
 const err::wrong_service_signature = 162;
@@ -28,6 +26,8 @@ const err::mismatched_data = 171;
 const err::wrong_state = 172;
 const err::no_recovery_initiated = 173;
 const err::no_disabling_initiated = 174;
+
+const INSTALL_PLUGIN_GAS_USAGE = 4128;
 
 (int, slice, int, int, cell, int, slice) load_data() inline {
     var ds = get_data().begin_parse();
@@ -104,10 +104,12 @@ const err::no_disabling_initiated = 174;
             rest_state
         );
 
+        (int wc, int _hash) = parse_std_addr(my_address());
+
         cell msg = begin_cell()
             .store_nonbounce_flags()
             .store_slice(wallet_addr)
-            .store_coins(one_ton / 100)
+            .store_coins(get_compute_fee(wc, INSTALL_PLUGIN_GAS_USAGE) * 3)
             .store_ref_body(
                 begin_cell()
                 .store_uint(op::wallet::request_by_extension, 32)
@@ -122,7 +124,7 @@ const err::no_disabling_initiated = 174;
             )
             .end_cell();
 
-        send_raw_message(msg, 0);
+        send_raw_message(msg, PAY_FEE_SEPARATELY);
 
         return ();
     }
@@ -229,16 +231,18 @@ const err::no_disabling_initiated = 174;
         );
         commit();
 
+        int mode = in_msg~load_uint(8);
+        int value = in_msg~load_coins();
         cell body = in_msg.preload_ref();
 
         cell msg = begin_cell()
             .store_nonbounce_flags()
             .store_slice(wallet_addr)
-            .store_coins(0)
+            .store_coins(value)
             .store_ref_body(body)
             .end_cell();
 
-        send_raw_message(msg, 128);
+        send_raw_message(msg, mode);
 
         return ();
     }

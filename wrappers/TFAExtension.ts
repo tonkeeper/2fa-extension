@@ -88,7 +88,7 @@ export class TFAExtension implements Contract {
             opts.seqno,
             opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.SEND_ACTIONS,
-            beginCell().storeRef(opts.actionsList),
+            beginCell().storeRef(opts.actionsList).storeUint(opts.sendMode, 8).storeCoins(opts.value),
         );
         await this.sendExternal(provider, body);
     }
@@ -309,6 +309,8 @@ export type AuthSeed = {
 
 export type SendActionsOpts = TFAAuthDevice & {
     actionsList: Cell;
+    sendMode: SendMode;
+    value: bigint;
 };
 
 export type AuthorizeDeviceOpts = TFAAuthDevice & {

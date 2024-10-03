@@ -19,7 +19,6 @@ import { JettonMinter } from '../notcoin-contract/wrappers/JettonMinter';
 import * as fs from 'fs';
 import { JettonWallet } from '../notcoin-contract/wrappers/JettonWallet';
 import { OutActionWalletV5 } from '@ton/ton/dist/wallets/v5beta/WalletV5OutActions';
-import { storeWalletIdV5R1 } from '@ton/ton/dist/wallets/v5r1/WalletV5R1WalletId';
 
 describe('TFAExtension', () => {
     let code: Cell;
@@ -37,6 +36,8 @@ describe('TFAExtension', () => {
     let seedKeypair: KeyPair;
     let deviceKeypairs: KeyPair[];
     let walletKeypair: KeyPair;
+
+    let firstInstall = true;
 
     beforeEach(async () => {
         blockchain = await Blockchain.create();
@@ -84,6 +85,17 @@ describe('TFAExtension', () => {
             success: true,
         });
         expect(await walletV5.getIsSecretKeyAuthEnabled()).toEqual(false);
+
+        if (firstInstall) {
+            firstInstall = false;
+
+            let gasUsed = (
+                (deployResult.transactions[2].description as TransactionDescriptionGeneric)
+                    .computePhase as TransactionComputeVm
+            ).gasUsed;
+
+            console.log(`GAS USED WHEN INSTALLING EXTENSION ON WALLET: ${gasUsed}\n`);
+        }
     });
 
     async function linkExtension() {
@@ -171,8 +183,10 @@ describe('TFAExtension', () => {
                 devicePrivateKey: devicePrivateKey,
                 deviceId,
                 seqno,
-                actionsList: request,
                 validUntil,
+                actionsList: request,
+                sendMode: SendMode.NONE,
+                value: toNano('0.1'),
             });
 
             let s = '';
@@ -1169,6 +1183,8 @@ describe('TFAExtension', () => {
                 deviceId: 0,
                 seqno: 1,
                 actionsList: actions,
+                sendMode: SendMode.NONE,
+                value: toNano('0.05'),
             });
 
             {
@@ -1280,6 +1296,8 @@ describe('TFAExtension', () => {
                 deviceId: 0,
                 seqno: 1,
                 actionsList: actions,
+                sendMode: SendMode.NONE,
+                value: toNano('0.2'),
             });
             expect(res.transactions).toHaveTransaction({
                 from: tFAExtension.address,
