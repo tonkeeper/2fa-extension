@@ -347,12 +347,16 @@ export function packTFABody(
     opCode: OpCode,
     payload: Builder,
 ): Cell {
-    const dataToSign = beginCell().storeUint(seqno, 32).storeUint(validUntil, 64).storeBuilder(payload).endCell();
+    const dataToSign = beginCell()
+        .storeUint(opCode, 32)
+        .storeUint(seqno, 32)
+        .storeUint(validUntil, 64)
+        .storeBuilder(payload)
+        .endCell();
     const signature1 = sign(dataToSign.hash(), servicePrivateKey);
     const signature2 = sign(dataToSign.hash(), devicePrivateKey);
 
     const body = beginCell()
-        .storeUint(opCode, 32)
         .storeBuffer(signature1)
         .storeRef(beginCell().storeBuffer(signature2).storeUint(deviceId, 32))
         .storeSlice(dataToSign.beginParse());
@@ -368,12 +372,16 @@ export function packTFASeedBody(
     opCode: OpCode,
     payload: Builder,
 ): Cell {
-    const dataToSign = beginCell().storeUint(seqno, 32).storeUint(validUntil, 64).storeBuilder(payload).endCell();
+    const dataToSign = beginCell()
+        .storeUint(opCode, 32)
+        .storeUint(seqno, 32)
+        .storeUint(validUntil, 64)
+        .storeBuilder(payload)
+        .endCell();
     const signature1 = sign(dataToSign.hash(), servicePrivateKey);
     const signature2 = sign(dataToSign.hash(), seedPrivateKey);
 
     const body = beginCell()
-        .storeUint(opCode, 32)
         .storeBuffer(signature1)
         .storeRef(beginCell().storeBuffer(signature2))
         .storeSlice(dataToSign.beginParse());
@@ -388,10 +396,15 @@ export function packSeedBody(
     opCode: OpCode,
     payload: Builder,
 ): Cell {
-    const dataToSign = beginCell().storeUint(seqno, 32).storeUint(validUntil, 64).storeBuilder(payload).endCell();
+    const dataToSign = beginCell()
+        .storeUint(opCode, 32)
+        .storeUint(seqno, 32)
+        .storeUint(validUntil, 64)
+        .storeBuilder(payload)
+        .endCell();
     const signature = sign(dataToSign.hash(), seedPrivateKey);
 
-    const body = beginCell().storeUint(opCode, 32).storeBuffer(signature).storeSlice(dataToSign.beginParse());
+    const body = beginCell().storeBuffer(signature).storeSlice(dataToSign.beginParse());
 
     return body.endCell();
 }

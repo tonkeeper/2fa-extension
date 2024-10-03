@@ -132,9 +132,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     throw(0xffff);
 }
 
-(slice, ()) check_2fa(slice cs, int service_pubkey, cell device_pubkeys, int stored_seqno) impure inline {
-    slice service_signature = cs~load_bits(512);
-
+(slice, ()) check_2fa(slice cs, slice service_signature, int service_pubkey, cell device_pubkeys, int stored_seqno) impure inline {
     slice device_info = cs~load_ref().begin_parse();
     slice device_signature = device_info~load_bits(512);
     int device_pubkey_id = device_info.preload_uint(32);
@@ -153,6 +151,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         check_signature(root_hash, service_signature, service_pubkey)
     );
 
+    cs~skip_bits(32);
     int seqno = cs~load_uint(32);
     int valid_until = cs~load_uint(64);
 
@@ -162,9 +161,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     return (cs, ());
 }
 
-(slice, ()) check_2fa_with_seed(slice cs, int service_pubkey, int seed_pubkey, int stored_seqno) impure {
-    slice service_signature = cs~load_bits(512);
-
+(slice, ()) check_2fa_with_seed(slice cs, slice service_signature, int service_pubkey, int seed_pubkey, int stored_seqno) impure {
     slice seed_info = cs~load_ref().begin_parse();
     slice seed_signature = seed_info~load_bits(512);
 
@@ -179,6 +176,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         check_signature(root_hash, seed_signature, seed_pubkey)
     );
 
+    cs~skip_bits(32);
+
     int seqno = cs~load_uint(32);
     throw_unless(err::wrong_seqno, seqno == stored_seqno);
 
@@ -188,11 +187,12 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     return (cs, ());
 }
 
-(slice, ()) check_seed_auth(slice cs, int seed_pubkey, int stored_seqno) impure inline {
-    slice seed_signature = cs~load_bits(512);
+(slice, ()) check_seed_auth(slice cs, slice seed_signature, int seed_pubkey, int stored_seqno) impure inline {
     int root_hash = slice_hash(cs);
 
     throw_unless(err::wrong_seed_signature, check_signature(root_hash, seed_signature, seed_pubkey));
+
+    cs~skip_bits(32);
 
     int seqno = cs~load_uint(32);
     throw_unless(err::wrong_seqno, seqno == stored_seqno);
@@ -204,7 +204,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
 }
 
 () recv_external(slice in_msg) impure {
-    int op = in_msg~load_uint(32);
+    slice signature1 = in_msg~load_bits(512);
+    int op = in_msg.preload_uint(32);
 
     var ds = get_data().begin_parse();
 
@@ -220,7 +221,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
 
     if (op == op::send_actions) {
         throw_if(err::recovery_or_disabling_in_progress, state);
-        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+        in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
         accept_message();
 
         set_data(
@@ -249,7 +250,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
 
     if (op == op::authorize_device) {
         throw_if(err::recovery_or_disabling_in_progress, state);
-        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+        in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
 
         int new_device_pubkey_id = in_msg~load_uint(32);
         slice new_device_pubkey = in_msg~load_ref().begin_parse();
@@ -275,7 +276,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
 
     if (op == op::unauthorize_device) {
         throw_if(err::recovery_or_disabling_in_progress, state);
-        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+        in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
 
         int device_pubkey_id = in_msg~load_uint(32);
         (cell new_device_pubkeys, int deleted?) = device_pubkeys.udict_delete?(32, device_pubkey_id);
@@ -298,7 +299,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     }
 
     if (op == op::recover_access) {
-        in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
+        in_msg~check_2fa_with_seed(signature1, service_pubkey, seed_pubkey, seqno);
 
         int recovery_blocked_until = rest_state~load_uint(64);
         throw_unless(err::action_timeout, recovery_blocked_until <= now());
@@ -360,7 +361,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     }
 
     if (op == op::cancel_request) {
-        in_msg~check_2fa_with_seed(service_pubkey, seed_pubkey, seqno);
+        in_msg~check_2fa_with_seed(signature1, service_pubkey, seed_pubkey, seqno);
 
         throw_unless(err::no_recovery_initiated, state == 1);
         accept_message();
@@ -379,7 +380,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     }
 
     if (op == op::destruct) {
-        in_msg~check_2fa(service_pubkey, device_pubkeys, seqno);
+        in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
 
         throw_unless(err::recovery_or_disabling_in_progress, state == 0);
         accept_message();
@@ -411,7 +412,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     }
 
     if (op == op::disable) {
-        in_msg~check_seed_auth(seed_pubkey, seqno);
+        in_msg~check_seed_auth(signature1, seed_pubkey, seqno);
 
         int recovery_blocked_until = rest_state~load_uint(64);
         throw_unless(err::action_timeout, recovery_blocked_until <= now());
@@ -496,7 +497,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     }
 
     if (op == op::cancel_disabling) {
-        in_msg~check_seed_auth(seed_pubkey, seqno);
+        in_msg~check_seed_auth(signature1, seed_pubkey, seqno);
 
         throw_unless(err::no_disabling_initiated, state == 2);
         accept_message();
