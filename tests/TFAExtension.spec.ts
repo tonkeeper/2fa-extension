@@ -5,6 +5,7 @@ import {
     Cell,
     Dictionary,
     internal,
+    storeMessageRelaxed,
     toNano,
     TransactionComputeVm,
     TransactionDescriptionGeneric,
@@ -178,15 +179,19 @@ describe('TFAExtension', () => {
                 authType: 'extension',
                 actions,
             });
+            const msg = internal({
+                to: walletV5.address,
+                value: toNano('0.1'),
+                body: request,
+            });
             const res1 = await tFAExtension.sendSendActions({
                 servicePrivateKey: servicePrivateKey,
                 devicePrivateKey: devicePrivateKey,
                 deviceId,
                 seqno,
                 validUntil,
-                actionsList: request,
+                msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
                 sendMode: SendMode.NONE,
-                value: toNano('0.1'),
             });
 
             let s = '';
@@ -1177,14 +1182,20 @@ describe('TFAExtension', () => {
                     },
                 ],
             });
+
+            const msg = internal({
+                to: walletV5.address,
+                value: toNano('0.05'),
+                body: actions,
+            });
+
             const res = await tFAExtension.sendSendActions({
                 servicePrivateKey: serviceKeypair.secretKey,
                 devicePrivateKey: deviceKeypairs[0].secretKey,
                 deviceId: 0,
                 seqno: 1,
-                actionsList: actions,
+                msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
                 sendMode: SendMode.NONE,
-                value: toNano('0.05'),
             });
 
             {
@@ -1290,14 +1301,18 @@ describe('TFAExtension', () => {
                 authType: 'extension',
                 actions: actionsList,
             });
+            const msg = internal({
+                to: walletV5.address,
+                value: toNano('0.2'),
+                body: actions,
+            });
             const res = await tFAExtension.sendSendActions({
                 servicePrivateKey: serviceKeypair.secretKey,
                 devicePrivateKey: deviceKeypairs[0].secretKey,
                 deviceId: 0,
                 seqno: 1,
-                actionsList: actions,
+                msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
                 sendMode: SendMode.NONE,
-                value: toNano('0.2'),
             });
             expect(res.transactions).toHaveTransaction({
                 from: tFAExtension.address,

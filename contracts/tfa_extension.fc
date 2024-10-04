@@ -233,15 +233,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         commit();
 
         int mode = in_msg~load_uint(8);
-        int value = in_msg~load_coins();
-        cell body = in_msg.preload_ref();
-
-        cell msg = begin_cell()
-            .store_nonbounce_flags()
-            .store_slice(wallet_addr)
-            .store_coins(value)
-            .store_ref_body(body)
-            .end_cell();
+        cell msg = in_msg.preload_ref();
 
         send_raw_message(msg, mode);
 
