@@ -245,7 +245,7 @@ cancel_disabling#b3b4b8f3 = ExternalMessage;
 This method is used to cancel the request to disable the extension. If the current state is `disable`, it resets to the
 `none` state.
 
-## TL-B schemes
+### TL-B schemes
 
 ```tl-b
 install#43563174 service_pubkey:uint256 seed_pubkey:uint256 device_pubkeys:(Dict uint32 uint256) = InternalMessage;
@@ -259,3 +259,17 @@ destruct#9d8084d6 = ExternalMessage;
 disable#23d9c15c new_state_init:^Cell forward_amount:Coins = ExternalMessage;
 cancel_disabling#b3b4b8f3 = ExternalMessage;
 ```
+
+## Get Methods
+
+- `int get_seqno()` - returns the current seqno.
+- `int get_wallet_addr()` - returns the wallet address.
+- `int get_service_pubkey()` - returns the service public key.
+- `int get_seed_pubkey()` - returns the seed public key.
+- `int get_device_pubkey(int device_id)` - returns the device public key by device ID.
+- `int get_device_pubkeys()` - returns the hash map of device pubkeys. Key is uint32 device id, value is uint256 pubkey.
+- `(int, int, int, int) get_state()` - returns the recover state. First parameter is the `state tag`: 0 - none, 
+1 - recover_access, 2 - disable. Second parameter is the `blocked_until`: the time when the confirmation action 
+can be performed. Third parameter is the new device ID. Fourth parameter is the new device pubkey.
+- `(int, int, cell, int) get_disable_state()` - returns the disable state. First parameter is the `state tag`. 
+Second parameter is the `blocked_until`. Third parameter is the `new_state_init`. Fourth parameter is the `forward_amount`.
