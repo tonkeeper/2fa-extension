@@ -42,6 +42,28 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     );
 }
 
+;; Initialize starting values properly.
+;; Note: If the last 32 bits are used to mine the contract address,
+;;       they will not be stored in the state.
+() save_state_after_install(
+    slice wallet,
+    int service_pubkey,
+    int seed_pubkey,
+    cell device_pubkeys
+) impure inline {
+    set_data(
+        begin_cell()
+            .store_uint(1, 32)
+            .store_slice(wallet)
+            .store_uint(service_pubkey, 256)
+            .store_uint(seed_pubkey, 256)
+            .store_dict(device_pubkeys)
+            .store_uint(0, 2)
+            .store_uint(0, 64)
+            .end_cell()
+    );
+}
+
 () save_state(
     int seqno,
     slice wallet,
@@ -94,14 +116,11 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         int new_seed_pubkey = in_msg_body~load_uint(256);
         cell new_device_pubkeys = in_msg_body~load_dict();
 
-        save_state(
-            1,
+        save_state_after_install(
             sender,
             new_service_pubkey,
             new_seed_pubkey,
-            new_device_pubkeys,
-            state,
-            rest_state
+            new_device_pubkeys
         );
 
         (int wc, int _hash) = parse_std_addr(my_address());
