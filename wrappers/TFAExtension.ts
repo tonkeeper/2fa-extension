@@ -260,6 +260,22 @@ export class TFAExtension implements Contract {
                 };
         }
     }
+
+    async getEstimatedFees(
+        provider: ContractProvider,
+        opts: {
+            forwardMsg: Cell;
+            outputMsgCount: number;
+            extendedActionCount: number;
+        },
+    ): Promise<bigint> {
+        const res = await provider.get('get_gas_fee_for_processing_send_actions', [
+            { type: 'cell', cell: opts.forwardMsg },
+            { type: 'int', value: BigInt(opts.outputMsgCount) },
+            { type: 'int', value: BigInt(opts.extendedActionCount) },
+        ]);
+        return res.stack.readBigNumber();
+    }
 }
 
 export type RecoverState =

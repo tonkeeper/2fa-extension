@@ -292,3 +292,6 @@ cancel_disabling#b3b4b8f3 = ExternalMessage;
 can be performed. Third parameter is the new device ID. Fourth parameter is the new device pubkey.
 - `(int, int, cell, int) get_disable_state()` - returns the disable state. First parameter is the `state tag`. 
 Second parameter is the `blocked_until`. Third parameter is the `new_state_init`. Fourth parameter is the `forward_amount`.
+- `int get_gas_fee_for_processing_send_actions(cell msg, int msg_actions, int ext_actions)` - returns the gas fee 
+for processing the `send_actions` method. The first parameter is the serialized message. The second parameter is the
+number of outbound messages in the action list. The third parameter is the number of extended actions in the action list.

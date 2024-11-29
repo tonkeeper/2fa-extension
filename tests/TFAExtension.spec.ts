@@ -7,7 +7,10 @@ import {
     internal,
     storeMessageRelaxed,
     toNano,
+    TransactionActionPhase,
+    TransactionComputePhase,
     TransactionComputeVm,
+    TransactionDescription,
     TransactionDescriptionGeneric,
 } from '@ton/core';
 import { DisableState, RecoverState, TFAExtension } from '../wrappers/TFAExtension';
@@ -179,9 +182,19 @@ describe('TFAExtension', () => {
                 authType: 'extension',
                 actions,
             });
-            const msg = internal({
+            const msgPre = internal({
                 to: walletV5.address,
                 value: toNano('0.1'),
+                body: request,
+            });
+            const txFees = await tFAExtension.getEstimatedFees({
+                forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
+                outputMsgCount: actions.length,
+                extendedActionCount: 0,
+            });
+            let msg = internal({
+                to: walletV5.address,
+                value: txFees,
                 body: request,
             });
             const res1 = await tFAExtension.sendSendActions({
@@ -1183,9 +1196,19 @@ describe('TFAExtension', () => {
                 ],
             });
 
-            const msg = internal({
+            const msgPre = internal({
                 to: walletV5.address,
-                value: toNano('0.05'),
+                value: toNano('0.1'),
+                body: actions,
+            });
+            const txFees = await tFAExtension.getEstimatedFees({
+                forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
+                outputMsgCount: 1,
+                extendedActionCount: 0,
+            });
+            let msg = internal({
+                to: walletV5.address,
+                value: txFees,
                 body: actions,
             });
 
@@ -1301,9 +1324,19 @@ describe('TFAExtension', () => {
                 authType: 'extension',
                 actions: actionsList,
             });
-            const msg = internal({
+            const msgPre = internal({
                 to: walletV5.address,
-                value: toNano('0.2'),
+                value: toNano('0.1'),
+                body: actions,
+            });
+            const txFees = await tFAExtension.getEstimatedFees({
+                forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
+                outputMsgCount: actionsList.length,
+                extendedActionCount: 0,
+            });
+            let msg = internal({
+                to: walletV5.address,
+                value: txFees,
                 body: actions,
             });
             const res = await tFAExtension.sendSendActions({
