@@ -154,7 +154,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
 (slice, ()) check_2fa(slice cs, slice service_signature, int service_pubkey, cell device_pubkeys, int stored_seqno) impure inline {
     slice device_info = cs~load_ref().begin_parse();
     slice device_signature = device_info~load_bits(512);
-    int device_pubkey_id = device_info.preload_uint(32);
+    int device_pubkey_id = device_info~load_uint(32);
+    device_info.end_parse();
 
     int root_hash = slice_hash(cs);
 
@@ -183,6 +184,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
 (slice, ()) check_2fa_with_seed(slice cs, slice service_signature, int service_pubkey, int seed_pubkey, int stored_seqno) impure {
     slice seed_info = cs~load_ref().begin_parse();
     slice seed_signature = seed_info~load_bits(512);
+    seed_info.end_parse();
 
     int root_hash = slice_hash(cs);
 
