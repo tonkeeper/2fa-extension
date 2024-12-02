@@ -660,11 +660,6 @@ const int GAS_WALLET_PROCESS_BASE = 3545;
 const int GAS_WALLET_PROCESS_PER_ACTION = 717;
 const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
 
-int send_msg(cell msg, int mode) impure asm "SENDMSG";
-int get_forward_fees(cell forward_msg) inline {
-    return send_msg(forward_msg, 1024);
-}
-
 int get_gas_fee_for_processing_send_actions(
     cell forward_msg,
     int msg_actions,
@@ -678,6 +673,7 @@ int get_gas_fee_for_processing_send_actions(
             + GAS_WALLET_PROCESS_PER_ACTION * msg_actions
             + GAS_WALLET_PROCESS_PER_ACTION_EXT * extended_actions
     );
-    int forward_fee = get_forward_fees(forward_msg);
-    return compute_fee + forward_fee;
+    (int cells, int bits, int z, int w) = compute_data_size?(forward_msg, 10000);
+    int fwd_fees = get_forward_fee(0, bits, cells);
+    return compute_fee + fwd_fees;
 }
