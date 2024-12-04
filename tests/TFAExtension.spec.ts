@@ -999,7 +999,7 @@ describe('TFAExtension', () => {
         expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
     });
 
-    describe('disable', () => {
+    describe('delegation', () => {
         let newWalletKeypair: KeyPair;
         let newWallet: WalletContractV5R1;
         let newWalletStateInit: Cell;
@@ -1017,7 +1017,7 @@ describe('TFAExtension', () => {
                 .endCell();
         });
 
-        async function disableTest(opts: {
+        async function delegationTest(opts: {
             newStateInit?: Cell;
             forwardAmount?: bigint;
             seedPrivateKey?: Buffer;
@@ -1063,9 +1063,9 @@ describe('TFAExtension', () => {
             return res;
         }
 
-        it('should disable', async () => {
+        it('should delegate', async () => {
             blockchain.now = Math.floor(Date.now() / 1000);
-            const res = await disableTest({});
+            const res = await delegationTest({});
 
             // STEP 1
             expect(res.transactions).toHaveTransaction({
@@ -1083,7 +1083,7 @@ describe('TFAExtension', () => {
 
             // STEP 2
             blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 14;
-            const res2 = await disableTest({ validUntil: blockchain.now + 180 });
+            const res2 = await delegationTest({ validUntil: blockchain.now + 180 });
 
             expect(res2.transactions).toHaveTransaction({
                 to: tFAExtension.address,
@@ -1112,7 +1112,7 @@ describe('TFAExtension', () => {
             blockchain.now = Math.floor(Date.now() / 1000);
 
             // STEP 1
-            await disableTest({});
+            await delegationTest({});
 
             // STEP 2
             const res2 = await cancelTest({});
@@ -1127,35 +1127,35 @@ describe('TFAExtension', () => {
         });
 
         it('should not disable if seedPrivateKey is wrong', async () => {
-            await shouldFail(disableTest({ seedPrivateKey: (await randomKeypair()).secretKey }));
+            await shouldFail(delegationTest({ seedPrivateKey: (await randomKeypair()).secretKey }));
         });
 
         it('should not disable if seqno is wrong', async () => {
-            await shouldFail(disableTest({ seqno: 0 }));
+            await shouldFail(delegationTest({ seqno: 0 }));
         });
 
         it('should not disable if validUntil is wrong', async () => {
-            await shouldFail(disableTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
+            await shouldFail(delegationTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
         });
 
         it('should not disable if state init is wrong on step 2', async () => {
             // STEP 1
             blockchain.now = Math.floor(Date.now() / 1000);
-            await disableTest({});
+            await delegationTest({});
 
             // STEP 2
             blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 3;
-            await shouldFail(disableTest({ newStateInit: beginCell().storeUint(0, 2).endCell() }));
+            await shouldFail(delegationTest({ newStateInit: beginCell().storeUint(0, 2).endCell() }));
         });
 
         it('should not disable if forwardAmount is wrong on step 2', async () => {
             // STEP 1
             blockchain.now = Math.floor(Date.now() / 1000);
-            await disableTest({});
+            await delegationTest({});
 
             // STEP 2
             blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 3;
-            await shouldFail(disableTest({ forwardAmount: toNano('0.4') }));
+            await shouldFail(delegationTest({ forwardAmount: toNano('0.4') }));
         });
 
         it('should not cancel if disabling is not started', async () => {
@@ -1165,7 +1165,7 @@ describe('TFAExtension', () => {
         it('should not cancel if seedPrivateKey is wrong', async () => {
             // STEP 1
             blockchain.now = Math.floor(Date.now() / 1000);
-            await disableTest({});
+            await delegationTest({});
 
             await shouldFail(cancelTest({ seedPrivateKey: (await randomKeypair()).secretKey }));
         });
@@ -1173,7 +1173,7 @@ describe('TFAExtension', () => {
         it('should not cancel if seqno is wrong', async () => {
             // STEP 1
             blockchain.now = Math.floor(Date.now() / 1000);
-            await disableTest({});
+            await delegationTest({});
 
             await shouldFail(cancelTest({ seqno: 0 }));
         });
@@ -1181,7 +1181,7 @@ describe('TFAExtension', () => {
         it('should not cancel if validUntil is wrong', async () => {
             // STEP 1
             blockchain.now = Math.floor(Date.now() / 1000);
-            await disableTest({});
+            await delegationTest({});
 
             await shouldFail(cancelTest({ validUntil: Math.floor(Date.now() / 1000) - 3 }));
         });

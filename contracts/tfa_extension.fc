@@ -591,25 +591,46 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
 
             slice new_extension_address = calculate_address(0, new_state_init);
 
+            var delegate_creation_msg = begin_cell()
+                .store_nonbounce_flags()
+                .store_slice(new_extension_address)
+                .store_coins(forward_amount)
+                .store_uint(4 + 2, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+                .store_ref(new_state_init)
+                .end_cell();
+
+            var confirmation_msg = begin_cell()
+                .store_nonbounce_flags()
+                .store_slice(my_address())
+                .store_coins(get_compute_fee(0, CONFIRM_REMOVAL_GAS_USAGE))
+                .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+                .store_uint(op::confirm_removal, 32)
+                .end_cell();
+
             var msg = begin_cell()
                 .store_nonbounce_flags()
                 .store_slice(wallet_addr)
-                .store_coins(0)
+                .store_coins(
+                    get_compute_fee(
+                        0,
+                        GAS_WALLET_PROCESS_BASE * 3
+                        + GAS_WALLET_PROCESS_PER_ACTION * 2
+                        + GAS_WALLET_PROCESS_PER_ACTION_EXT * 2
+                    )
+                )
                 .store_ref_body(
                     begin_cell()
                     .store_uint(op::wallet::request_by_extension, 32)
                     .store_uint(0, 64)
                     .store_out_action_list(
                         new_out_action_send_msg(
-                            begin_cell().end_cell(),
-                            0,
-                            begin_cell()
-                                .store_nonbounce_flags()
-                                .store_slice(new_extension_address)
-                                .store_coins(forward_amount)
-                                .store_uint(4 + 2, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
-                                .store_ref(new_state_init)
-                                .end_cell()
+                            new_out_action_send_msg(
+                                begin_cell().end_cell(),
+                                IGNORE_ACTION_ERRORS,
+                                delegate_creation_msg
+                            ),
+                            IGNORE_ACTION_ERRORS + PAY_FEE_SEPARATELY,
+                            confirmation_msg
                         )
                     )
                     .store_uint(1, 1)
@@ -620,7 +641,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
                     .end_cell()
                 );
 
-            send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
+            send_raw_message(msg.end_cell(), PAY_FEE_SEPARATELY);
         } else {
             throw(err::wrong_state);
         }
