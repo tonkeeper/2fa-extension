@@ -541,7 +541,7 @@ describe('TFAExtension', () => {
         });
     });
 
-    describe('destruct', () => {
+    describe('remove extension', () => {
         async function destructTest(opts: {
             servicePrivateKey?: Buffer;
             devicePrivateKey?: Buffer;
@@ -588,6 +588,12 @@ describe('TFAExtension', () => {
 
             expect(await walletV5.getIsSecretKeyAuthEnabled()).toEqual(true);
             expect(await walletV5.getExtensionsArray()).toEqual([]);
+
+            let confirmationGasUsed = (
+                (res.transactions[2].description as TransactionDescriptionGeneric).computePhase as TransactionComputeVm
+            ).gasUsed;
+
+            expect(confirmationGasUsed).toEqual(2755n);
         });
 
         it('should not destruct with wrong servicePrivateKey', async () => {

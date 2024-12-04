@@ -2,6 +2,8 @@
 #include "imports/shared.fc";
 
 const op::install =              0x43563174;
+const op::confirm_removal =      0xc2d7f22b;
+
 const op::send_actions =         0xb15f2c8c;
 const op::add_device_key =       0x0a73fcb4;
 const op::remove_device_key =    0xa04d2666;
@@ -39,6 +41,10 @@ const err::no_recovery_initiated = 173;
 const err::no_delegation_initiated = 174;
 
 const INSTALL_PLUGIN_GAS_USAGE = 4128;
+const CONFIRM_REMOVAL_GAS_USAGE = 2755;
+const int GAS_WALLET_PROCESS_BASE = 3545;
+const int GAS_WALLET_PROCESS_PER_ACTION = 717;
+const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
 
 (int, slice, int, int, cell, int, slice) load_data() inline {
     var ds = get_data().begin_parse();
@@ -155,6 +161,20 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
             .end_cell();
 
         send_raw_message(msg, PAY_FEE_SEPARATELY);
+
+        return ();
+    }
+
+    if (op == op::confirm_removal) {
+        throw_unless(err::sender_is_not_owner, equal_slices(sender, wallet_addr));
+
+        var msg = begin_cell()
+            .store_nonbounce_flags()
+            .store_slice(wallet_addr)
+            .store_coins(0)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1);
+
+        send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
 
         return ();
     }
@@ -476,15 +496,36 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         throw_unless(err::recovery_in_progress, state == recover_state::none);
         accept_message();
 
+        var confirmation_msg = begin_cell()
+            .store_nonbounce_flags()
+            .store_slice(my_address())
+            .store_coins(get_compute_fee(0, CONFIRM_REMOVAL_GAS_USAGE))
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+            .store_uint(op::confirm_removal, 32)
+            .end_cell();
+
         var msg = begin_cell()
             .store_nonbounce_flags()
             .store_slice(wallet_addr)
-            .store_coins(0)
+            .store_coins(
+                get_compute_fee(
+                    0,
+                        GAS_WALLET_PROCESS_BASE * 3
+                        + GAS_WALLET_PROCESS_PER_ACTION * 1
+                        + GAS_WALLET_PROCESS_PER_ACTION_EXT * 2
+                )
+            )
             .store_ref_body(
                 begin_cell()
                     .store_uint(op::wallet::request_by_extension, 32)
                     .store_uint(0, 64)
-                    .store_out_action_list(null())
+                    .store_out_action_list(
+                        new_out_action_send_msg(
+                            begin_cell().end_cell(),
+                            PAY_FEE_SEPARATELY + IGNORE_ACTION_ERRORS,
+                            confirmation_msg
+                        )
+                    )
                     .store_int(-1, 1)
                     .store_set_signature_auth(
                         1,
@@ -497,7 +538,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                     .end_cell()
             );
 
-        send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
+        send_raw_message(msg.end_cell(), PAY_FEE_SEPARATELY);
         return ();
     }
 
@@ -720,10 +761,6 @@ forall X -> tuple to_tuple(X x) asm "NOP";
         return (0, 0, to_tuple([]));
     }
 }
-
-const int GAS_WALLET_PROCESS_BASE = 3545;
-const int GAS_WALLET_PROCESS_PER_ACTION = 717;
-const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
 
 int get_gas_fee_for_processing_send_actions(
     cell forward_msg,
