@@ -748,7 +748,7 @@ describe('TFAExtension', () => {
             expect(state.type).toEqual('none');
         });
 
-        it('should not recover after recover process is canceled', async () => {
+        it('should recover after recover process is canceled', async () => {
             const newDeviceKeypair = await randomKeypair();
             blockchain.now = Math.floor(Date.now() / 1000);
 
@@ -763,13 +763,14 @@ describe('TFAExtension', () => {
             await cancelTest({});
 
             // ------ STEP 3 ------
-            await shouldFail(
-                recoverTest({
-                    newDevicePubkey: newDeviceKeypair.publicKey,
-                    newDeviceId: 1,
-                    validUntil: blockchain.now + 180,
-                }),
-            );
+            await recoverTest({
+                newDevicePubkey: newDeviceKeypair.publicKey,
+                newDeviceId: 1,
+                validUntil: blockchain.now + 180,
+            });
+
+            let state = await tFAExtension.getRecoverState();
+            expect(state.type).toEqual('fast');
         });
 
         it('should not recover if device pubkey is wrong on step 2', async () => {

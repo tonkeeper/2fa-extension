@@ -326,9 +326,12 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         in_msg~check_2fa_with_seed(signature1, service_pubkey, seed_pubkey, seqno);
 
         int recovery_blocked_until = rest_state~load_uint(64);
-        throw_unless(err::action_timeout, recovery_blocked_until <= now());
 
         if (state == recover_state::none) {
+            ;; Fast recover should be initiated even if other recovery is in progress.
+            ;; Other recovery will be canceled.
+            ;; This is done to prevent the situation when the hacker will initiate other recovery
+            ;; and the user will not have time to cancel it.
             accept_message();
 
             int new_device_pubkey = in_msg~load_uint(256);
@@ -355,6 +358,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                 new_recovery_state
             );
         } elseif (state == recover_state::fast) {
+            throw_unless(err::action_timeout, recovery_blocked_until <= now());
+
             slice added_info = rest_state~load_ref().begin_parse();
 
             slice new_device_pubkey = added_info~load_bits(256);
