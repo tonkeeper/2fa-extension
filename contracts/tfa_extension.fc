@@ -1,15 +1,26 @@
 #include "imports/stdlib.fc";
 #include "imports/shared.fc";
 
-const op::install =            0x43563174;
-const op::send_actions =       0xb15f2c8c;
-const op::authorize_device =   0x0a73fcb4;
-const op::unauthorize_device = 0xa04d2666;
-const op::recover_access =     0x59c538dd;
-const op::cancel_request =     0x30f0a407;
-const op::destruct =           0x9d8084d6;
-const op::disable =            0x23d9c15c;
-const op::cancel_disabling =   0xde82b501;
+const op::install =              0x43563174;
+const op::send_actions =         0xb15f2c8c;
+const op::add_device_key =       0x0a73fcb4;
+const op::remove_device_key =    0xa04d2666;
+const op::fast_recover_access =  0x59c538dd;
+const op::slow_recover_access =  0xd0029d00;
+const op::cancel_fast_recovery = 0x30f0a407;
+const op::remove_extension =     0x9d8084d6;
+const op::delegation =           0x23d9c15c;
+const op::cancel_delegation =    0xde82b501;
+
+const config::FAST_RECOVERY_TIMEOUT = 60 * 60 * 24;
+const config::DELEGATION_TIMEOUT = 60 * 60 * 24 * 14;
+const config::SLOW_RECOVERY_TIMEOUT = 60 * 60 * 24 * 14;
+const config::RETRAY_TIMEOUT = 60 * 60 * 24;
+
+const recover_state::none = 0;
+const recover_state::fast = 1;
+const recover_state::slow = 2;
+const recover_state::delegation = 3;
 
 const err::extension_already_installed = 160;
 const err::sender_is_not_owner = 161;
@@ -18,14 +29,14 @@ const err::wrong_device_signature = 163;
 const err::wrong_seed_signature = 164;
 const err::wrong_seqno = 165;
 const err::expired = 166;
-const err::recovery_or_disabling_in_progress = 167;
-const err::device_already_authorized = 168;
-const err::device_not_found = 169;
+const err::recovery_in_progress = 167;
+const err::device_key_exists = 168;
+const err::device_key_not_found = 169;
 const err::action_timeout = 170;
 const err::mismatched_data = 171;
 const err::wrong_state = 172;
 const err::no_recovery_initiated = 173;
-const err::no_disabling_initiated = 174;
+const err::no_delegation_initiated = 174;
 
 const INSTALL_PLUGIN_GAS_USAGE = 4128;
 
@@ -241,7 +252,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
     slice rest_state = ds;
 
     if (op == op::send_actions) {
-        throw_if(err::recovery_or_disabling_in_progress, state);
+        throw_if(err::recovery_in_progress, state);
         in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
         accept_message();
 
@@ -261,8 +272,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         return ();
     }
 
-    if (op == op::authorize_device) {
-        throw_if(err::recovery_or_disabling_in_progress, state);
+    if (op == op::add_device_key) {
+        throw_if(err::recovery_in_progress, state);
         in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
 
         int new_device_pubkey_id = in_msg~load_uint(32);
@@ -270,7 +281,7 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
 
         (cell new_device_pubkeys, int added?) = device_pubkeys.udict_add?(32, new_device_pubkey_id, new_device_pubkey);
 
-        throw_unless(err::device_already_authorized, added?);
+        throw_unless(err::device_key_exists, added?);
 
         accept_message();
 
@@ -280,21 +291,21 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
             service_pubkey,
             seed_pubkey,
             new_device_pubkeys,
-            0,
+            recover_state::none,
             rest_state
         );
 
         return ();
     }
 
-    if (op == op::unauthorize_device) {
-        throw_if(err::recovery_or_disabling_in_progress, state);
+    if (op == op::remove_device_key) {
+        throw_if(err::recovery_in_progress, state);
         in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
 
         int device_pubkey_id = in_msg~load_uint(32);
         (cell new_device_pubkeys, int deleted?) = device_pubkeys.udict_delete?(32, device_pubkey_id);
 
-        throw_unless(err::device_not_found, deleted?);
+        throw_unless(err::device_key_not_found, deleted?);
 
         accept_message();
 
@@ -304,27 +315,27 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
             service_pubkey,
             seed_pubkey,
             new_device_pubkeys,
-            0,
+            recover_state::none,
             rest_state
         );
 
         return ();
     }
 
-    if (op == op::recover_access) {
+    if (op == op::fast_recover_access) {
         in_msg~check_2fa_with_seed(signature1, service_pubkey, seed_pubkey, seqno);
 
         int recovery_blocked_until = rest_state~load_uint(64);
         throw_unless(err::action_timeout, recovery_blocked_until <= now());
 
-        if (state == 0) {
+        if (state == recover_state::none) {
             accept_message();
 
             int new_device_pubkey = in_msg~load_uint(256);
             int new_device_pubkey_id = in_msg~load_uint(32);
 
             slice new_recovery_state = begin_cell()
-                .store_uint(now() + 60 * 60 * 24 * 3, 64) ;; recovery_blocked_until
+                .store_uint(now() + config::FAST_RECOVERY_TIMEOUT, 64) ;; recovery_blocked_until
                 .store_ref(
                     begin_cell()
                         .store_uint(new_device_pubkey, 256) ;; new_device_pubkey
@@ -340,10 +351,10 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                 service_pubkey,
                 seed_pubkey,
                 device_pubkeys,
-                1,
+                recover_state::fast,
                 new_recovery_state
             );
-        } elseif (state == 1) {
+        } elseif (state == recover_state::fast) {
             slice added_info = rest_state~load_ref().begin_parse();
 
             slice new_device_pubkey = added_info~load_bits(256);
@@ -363,8 +374,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                 service_pubkey,
                 seed_pubkey,
                 new_device_pubkeys,
-                0,
-                begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+                recover_state::none,
+                begin_cell().store_uint(0, 64).end_cell().begin_parse()
             );
         } else {
             throw(err::wrong_state);
@@ -373,10 +384,72 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
         return ();
     }
 
-    if (op == op::cancel_request) {
+    if (op == op::slow_recover_access) {
+        in_msg~check_seed_auth(signature1, seed_pubkey, seqno);
+
+        int recovery_blocked_until = rest_state~load_uint(64);
+        throw_unless(err::action_timeout, recovery_blocked_until <= now());
+
+        if (state == recover_state::none) {
+            accept_message();
+
+            int new_device_pubkey = in_msg~load_uint(256);
+            int new_device_pubkey_id = in_msg~load_uint(32);
+
+            slice new_recovery_state = begin_cell()
+                .store_uint(now() + config::SLOW_RECOVERY_TIMEOUT, 64) ;; recovery_blocked_until
+                .store_ref(
+                    begin_cell()
+                        .store_uint(new_device_pubkey, 256) ;; new_device_pubkey
+                        .store_uint(new_device_pubkey_id, 32) ;; new_device_pubkey_id
+                        .end_cell()
+                )
+                .end_cell()
+                .begin_parse();
+
+            save_state(
+                seqno + 1,
+                wallet_addr,
+                service_pubkey,
+                seed_pubkey,
+                device_pubkeys,
+                recover_state::slow,
+                new_recovery_state
+            );
+        } elseif (state == recover_state::slow) {
+            slice added_info = rest_state~load_ref().begin_parse();
+
+            slice new_device_pubkey = added_info~load_bits(256);
+            int new_device_pubkey_id = added_info~load_uint(32);
+
+            throw_unless(err::mismatched_data, equal_slices(new_device_pubkey, in_msg~load_bits(256)));
+            throw_unless(err::mismatched_data, new_device_pubkey_id == in_msg~load_uint(32));
+
+            accept_message();
+
+            cell new_device_pubkeys = null();
+            new_device_pubkeys = new_device_pubkeys.udict_set(32, new_device_pubkey_id, new_device_pubkey);
+
+            save_state(
+                seqno + 1,
+                wallet_addr,
+                service_pubkey,
+                seed_pubkey,
+                new_device_pubkeys,
+                recover_state::none,
+                begin_cell().store_uint(0, 64).end_cell().begin_parse()
+            );
+        } else {
+            throw(err::wrong_state);
+        }
+
+        return ();
+    }
+
+    if (op == op::cancel_fast_recovery) {
         in_msg~check_2fa_with_seed(signature1, service_pubkey, seed_pubkey, seqno);
 
-        throw_unless(err::no_recovery_initiated, state == 1);
+        throw_unless(err::no_recovery_initiated, state == recover_state::fast);
         accept_message();
 
         save_state(
@@ -385,17 +458,17 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
             service_pubkey,
             seed_pubkey,
             device_pubkeys,
-            0,
-            begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+            recover_state::none,
+            begin_cell().store_uint(now() + config::RETRAY_TIMEOUT, 64).end_cell().begin_parse()
         );
 
         return ();
     }
 
-    if (op == op::destruct) {
+    if (op == op::remove_extension) {
         in_msg~check_2fa(signature1, service_pubkey, device_pubkeys, seqno);
 
-        throw_unless(err::recovery_or_disabling_in_progress, state == 0);
+        throw_unless(err::recovery_in_progress, state == recover_state::none);
         accept_message();
 
         var msg = begin_cell()
@@ -419,25 +492,24 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                     .end_cell()
             );
 
-
         send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
         return ();
     }
 
-    if (op == op::disable) {
+    if (op == op::delegation) {
         in_msg~check_seed_auth(signature1, seed_pubkey, seqno);
 
         int recovery_blocked_until = rest_state~load_uint(64);
         throw_unless(err::action_timeout, recovery_blocked_until <= now());
 
-        if (state == 0) {
+        if (state == recover_state::none) {
             accept_message();
 
             cell new_state_init = in_msg~load_ref();
             int forward_amount = in_msg~load_coins();
 
             slice new_recovery_state = begin_cell()
-                .store_uint(now() + 60 * 60 * 24 * 3, 64) ;; recovery_blocked_until
+                .store_uint(now() + config::DELEGATION_TIMEOUT, 64) ;; recovery_blocked_until
                 .store_ref(new_state_init)
                 .store_coins(forward_amount)
                 .end_cell()
@@ -449,10 +521,10 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                 service_pubkey,
                 seed_pubkey,
                 device_pubkeys,
-                2,
+                recover_state::delegation,
                 new_recovery_state
             );
-        } elseif (state == 2) {
+        } elseif (state == recover_state::delegation) {
             cell new_state_init = rest_state~load_ref();
             int forward_amount = rest_state~load_coins();
 
@@ -467,8 +539,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                 service_pubkey,
                 seed_pubkey,
                 device_pubkeys,
-                0,
-                begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+                recover_state::none,
+                begin_cell().store_uint(0, 64).end_cell().begin_parse()
             );
 
             slice new_extension_address = calculate_address(0, new_state_init);
@@ -502,17 +574,16 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
                     .end_cell()
                 );
 
-
             send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
         } else {
             throw(err::wrong_state);
         }
     }
 
-    if (op == op::cancel_disabling) {
+    if (op == op::cancel_delegation) {
         in_msg~check_seed_auth(signature1, seed_pubkey, seqno);
 
-        throw_unless(err::no_disabling_initiated, state == 2);
+        throw_unless(err::no_delegation_initiated, (state == recover_state::delegation) | (state == recover_state::slow));
         accept_message();
 
         save_state(
@@ -521,8 +592,8 @@ const INSTALL_PLUGIN_GAS_USAGE = 4128;
             service_pubkey,
             seed_pubkey,
             device_pubkeys,
-            0,
-            begin_cell().store_uint(now() + 60 * 60, 64).end_cell().begin_parse()
+            recover_state::none,
+            begin_cell().store_uint(now() + config::RETRAY_TIMEOUT, 64).end_cell().begin_parse()
         );
 
         return ();
@@ -610,7 +681,9 @@ int get_device_pubkey(int device_pubkey_id) method_id {
     return device_pubkey.preload_uint(256);
 }
 
-(int, int, int, int) get_recover_state() method_id {
+forall X -> tuple to_tuple(X x) asm "NOP";
+
+(int, int, tuple) get_recover_state() method_id {
     (
         int seqno,
         slice wallet_addr,
@@ -620,39 +693,26 @@ int get_device_pubkey(int device_pubkey_id) method_id {
         int recover_state,
         slice rest_state
     ) = load_data();
+
     int recovery_blocked_until = rest_state~load_uint(64);
 
-    if (recover_state == 1) {
+    if (recover_state == recover_state::none) {
+        return (recover_state, recovery_blocked_until, to_tuple([]));
+    } elseif ((recover_state == recover_state::fast) | (recover_state == recover_state::slow)) {
         slice added_info = rest_state~load_ref().begin_parse();
 
         int new_device_pubkey = added_info~load_uint(256);
         int new_device_pubkey_id = added_info~load_uint(32);
 
-        return (1, recovery_blocked_until, new_device_pubkey_id, new_device_pubkey);
-    } else {
-        return (recover_state, recovery_blocked_until, 0, 0);
-    }
-}
-
-(int, int, cell, int) get_disable_state() method_id {
-    (
-        int seqno,
-        slice wallet_addr,
-        int service_pubkey,
-        int seed_pubkey,
-        cell device_pubkeys,
-        int recover_state,
-        slice rest_state
-    ) = load_data();
-    int recovery_blocked_until = rest_state~load_uint(64);
-
-    if (recover_state == 2) {
+        return (recover_state, recovery_blocked_until, to_tuple([new_device_pubkey_id, new_device_pubkey]));
+    } elseif (recover_state == recover_state::delegation) {
         cell new_state_init = rest_state~load_ref();
         int forward_amount = rest_state~load_coins();
 
-        return (2, recovery_blocked_until, new_state_init, forward_amount);
+        return (recover_state, recovery_blocked_until, to_tuple([new_state_init, forward_amount]));
     } else {
-        return (recover_state, recovery_blocked_until, null(), 0);
+        throw(0xffff);
+        return (0, 0, to_tuple([]));
     }
 }
 

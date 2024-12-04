@@ -159,13 +159,13 @@ where:
   used to send messages to the wallet, but any message can be sent in case of necessity.
 - `mode` is a mode of the message that would be put into the `send_raw_msg` method.
 
-### `authorize_device`
+### `add_device_key`
 
 Requires [2FA](#2FA) authorization.
 
 ```tl-b
 pubkey$_ pubkey:uint256 = Pubkey;
-authorize_device#0a73fcb4 newDeviceID:uint32 pubkey:^(Pubkey) = ExternalMessage;
+add_device_key#0a73fcb4 newDeviceID:uint32 pubkey:^(Pubkey) = ExternalMessage;
 ```
 
 where:
@@ -175,23 +175,23 @@ where:
 Constraints:
 - The device with the same ID should not be authorized yet.
 
-### `unauthorize_device`
+### `remove_device_key`
 
 Requires [2FA](#2FA) authorization.
 
 ```tl-b
-unauthorize_device#b3b4b8f3 deviceID:uint32 = ExternalMessage;
+remove_device_key#b3b4b8f3 deviceID:uint32 = ExternalMessage;
 ```
 
 where:
 - `deviceID` is the ID of the device to be unauthorized.
 
-### `recover_access`
+### `fast_recover_process`
 
 Requires [2FA with Seed](#2FA-with-Seed) authorization.
 
 ```tl-b
-recover_access#59c538dd newDevicePubkey:uint256 newDeviceId:uint32 = ExternalMessage;
+fast_recover_process#59c538dd newDevicePubkey:uint256 newDeviceId:uint32 = ExternalMessage;
 ```
 
 where:
@@ -199,29 +199,48 @@ where:
 - `newDeviceId` is the ID of the new device.
 
 How it works:
-1. The extension received a message with the `recover_access` method.
-2. If it is the first time the method is called, extension state turns to the `recover_access` state.
-3. Before performing the next step, a delay of 72 hours must be completed.
-4. If the current state is `recover_access`, the extension will delete all previous device keys and
+1. The extension received a message with the `fast_recover_process` method.
+2. If it is the first time the method is called, extension state turns to the `fast_recover_process` state.
+3. Before performing the next step, a delay of 24 hours must be completed.
+4. If the current state is `fast_recover_process`, the extension will delete all previous device keys and
    authorize the new device key.
 
-### `cancel_request`
+### `cancel_fast_recovery`
 
 Requires [2FA with Seed](#2FA-with-Seed) authorization.
 
 ```tl-b
-cancel_request#30f0a407 = ExternalMessage;
+cancel_fast_recovery#30f0a407 = ExternalMessage;
 ```
 
-This method is used to cancel the request to recover access. If the current state is `recover_access` it resets to the 
+This method is used to cancel the request to recover access. If the current state is `fast_recover_process` it resets to the 
 `none` state.
 
-### `destruct`
+### `slow_recover_process`
+
+Requires [Seed](#Seed) authorization.
+
+```tl-b
+slow_recover_process#59c538dd newDevicePubkey:uint256 newDeviceId:uint32 = ExternalMessage;
+```
+
+where:
+- `newDevicePubkey` is the public key of the new device.
+- `newDeviceId` is the ID of the new device.
+
+How it works:
+1. The extension received a message with the `slow_recover_process` method.
+2. If it is the first time the method is called, extension state turns to the `slow_recover_process` state.
+3. Before performing the next step, a delay of 336 hours (2 weeks) must be completed.
+4. If the current state is `slow_recover_process`, the extension will delete all previous device keys and
+   authorize the new device key.
+
+### `remove_extension`
 
 Requires [2FA](#2FA) authorization.
 
 ```tl-b
-destruct#9d8084d6 = ExternalMessage;
+remove_extension#9d8084d6 = ExternalMessage;
 ```
 
 This method is used to delete the extension from the wallet. It enables the public key signature authorization, removes
@@ -229,14 +248,14 @@ the extension from the list of extensions, and deletes the extension smart contr
 
 WARNING: This method is dangerous because Seed can be compromised, but the fact that it is compromised may be unknown.
 The attacker can wait until the extension is deleted and then use the stolen seed phrase to directly access the wallet.
-It is strongly recommended to use `disable` method instead of `destruct`.
+It is strongly recommended to use `delegating` method instead of `remove_extension`.
 
-### `disable`
+### `delegating`
 
 Requires [Seed](#Seed-Authorization) authorization.
 
 ```tl-b
-disable#23d9c15c new_state_init:^Cell forward_amount:Coins = ExternalMessage;
+delegating#23d9c15c new_state_init:^Cell forward_amount:Coins = ExternalMessage;
 ```
 
 where:
@@ -247,21 +266,21 @@ This method is used to disable the extension. It removes the extension from the 
 new extension with the `new_state_init` state and adds new extension to the list of extensions. 
 
 How it works:
-1. The extension received a message with the `disable` method.
-2. If it is the first time the method is called, extension state turns to the `disable` state.
+1. The extension received a message with the `delegating` method.
+2. If it is the first time the method is called, extension state turns to the `delegating` state.
 3. Before performing the next step, a delay of 72 hours must be completed.
-4. If the current state is `disable`, the extension will send a message to the wallet to create a new extension 
+4. If the current state is `delegating`, the extension will send a message to the wallet to create a new extension 
 with the `new_state_init` state.
 
-### `cancel_disabling`
+### `cancel_slow_recovery_and_delegating`
 
 Requires [Seed](#Seed-Authorization) authorization.
 
 ```tl-b
-cancel_disabling#b3b4b8f3 = ExternalMessage;
+cancel_slow_recovery_and_delegating#b3b4b8f3 = ExternalMessage;
 ```
 
-This method is used to cancel the request to disable the extension. If the current state is `disable`, it resets to the
+This method is used to cancel the and `delegating`. If the current state is `disable`, it resets to the
 `none` state.
 
 ### TL-B schemes
@@ -287,11 +306,8 @@ cancel_disabling#b3b4b8f3 = ExternalMessage;
 - `int get_seed_pubkey()` - returns the seed public key.
 - `int get_device_pubkey(int device_id)` - returns the device public key by device ID.
 - `int get_device_pubkeys()` - returns the hash map of device pubkeys. Key is uint32 device id, value is uint256 pubkey.
-- `(int, int, int, int) get_state()` - returns the recover state. First parameter is the `state tag`: 0 - none, 
-1 - recover_access, 2 - disable. Second parameter is the `blocked_until`: the time when the confirmation action 
-can be performed. Third parameter is the new device ID. Fourth parameter is the new device pubkey.
-- `(int, int, cell, int) get_disable_state()` - returns the disable state. First parameter is the `state tag`. 
-Second parameter is the `blocked_until`. Third parameter is the `new_state_init`. Fourth parameter is the `forward_amount`.
+- `(int, int, tuple) get_recover_state()` - returns the recover state. First parameter is the `state tag`. 
+Second parameter is the `blocked_until`. Third parameter is the state params.
 - `int get_gas_fee_for_processing_send_actions(cell msg, int msg_actions, int ext_actions)` - returns the gas fee 
 for processing the `send_actions` method. The first parameter is the serialized message. The second parameter is the
 number of outbound messages in the action list. The third parameter is the number of extended actions in the action list.

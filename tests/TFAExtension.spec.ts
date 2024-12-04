@@ -357,7 +357,7 @@ describe('TFAExtension', () => {
         });
 
         it('should not send actions if recover process is started', async () => {
-            await tFAExtension.sendRecoverAccess({
+            await tFAExtension.sendFastRecoverAccess({
                 servicePrivateKey: serviceKeypair.secretKey,
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
@@ -397,7 +397,7 @@ describe('TFAExtension', () => {
                 newDevicePubkey = (await randomKeypair()).publicKey;
             }
 
-            const res = await tFAExtension.sendAuthorizeDevice({
+            const res = await tFAExtension.sendAddDeviceKey({
                 servicePrivateKey,
                 devicePrivateKey,
                 deviceId,
@@ -448,7 +448,7 @@ describe('TFAExtension', () => {
         });
 
         it('should not authorize device if recover process is started', async () => {
-            await tFAExtension.sendRecoverAccess({
+            await tFAExtension.sendFastRecoverAccess({
                 servicePrivateKey: serviceKeypair.secretKey,
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
@@ -478,7 +478,7 @@ describe('TFAExtension', () => {
                 seqno = await tFAExtension.getSeqno(),
             } = opts;
 
-            const res = await tFAExtension.sendUnauthorizeDevice({
+            const res = await tFAExtension.sendRemoveDeviceKey({
                 servicePrivateKey,
                 devicePrivateKey,
                 deviceId,
@@ -529,7 +529,7 @@ describe('TFAExtension', () => {
         });
 
         it('should not unauthorize device if recover process is started', async () => {
-            await tFAExtension.sendRecoverAccess({
+            await tFAExtension.sendFastRecoverAccess({
                 servicePrivateKey: serviceKeypair.secretKey,
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
@@ -557,7 +557,7 @@ describe('TFAExtension', () => {
                 seqno = await tFAExtension.getSeqno(),
             } = opts;
 
-            const res = await tFAExtension.sendDestruct({
+            const res = await tFAExtension.sendRemoveExtension({
                 servicePrivateKey,
                 devicePrivateKey,
                 deviceId,
@@ -613,7 +613,7 @@ describe('TFAExtension', () => {
         });
 
         it('should not destruct if recover process is started', async () => {
-            await tFAExtension.sendRecoverAccess({
+            await tFAExtension.sendFastRecoverAccess({
                 servicePrivateKey: serviceKeypair.secretKey,
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
@@ -625,7 +625,7 @@ describe('TFAExtension', () => {
         });
     });
 
-    describe('recover', () => {
+    describe('fast recover', () => {
         async function recoverTest(opts: {
             servicePrivateKey?: Buffer;
             seedPrivateKey?: Buffer;
@@ -647,7 +647,7 @@ describe('TFAExtension', () => {
                 newDevicePubkey = (await randomKeypair()).publicKey;
             }
 
-            const res = await tFAExtension.sendRecoverAccess({
+            const res = await tFAExtension.sendFastRecoverAccess({
                 servicePrivateKey,
                 seedPrivateKey,
                 seqno,
@@ -672,7 +672,7 @@ describe('TFAExtension', () => {
                 validUntil = Math.floor(Date.now() / 1000) + 180,
             } = opts;
 
-            const res = await tFAExtension.sendCancelRequest({
+            const res = await tFAExtension.sendCancelFastRecovery({
                 servicePrivateKey,
                 seedPrivateKey,
                 seqno,
@@ -698,7 +698,7 @@ describe('TFAExtension', () => {
                 success: true,
             });
             let state: RecoverState = await tFAExtension.getRecoverState();
-            if (state.type === 'requested') {
+            if (state.type === 'fast') {
                 expect(state.newDeviceId).toEqual(1);
                 expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
             } else {
@@ -706,7 +706,7 @@ describe('TFAExtension', () => {
             }
 
             // ------ STEP 2 ------
-            blockchain.now += 60 * 60 * 24 * 3;
+            blockchain.now += 60 * 60 * 24;
 
             const res2 = await recoverTest({
                 newDevicePubkey: newDeviceKeypair.publicKey,
@@ -944,6 +944,54 @@ describe('TFAExtension', () => {
         });
     });
 
+    it('should slow recover', async () => {
+        const newDeviceKeypair = await randomKeypair();
+        blockchain.now = Math.floor(Date.now() / 1000);
+
+        // ------ STEP 1 ------
+        const res = await tFAExtension.sendSlowRecoverAccess({
+            seedPrivateKey: seedKeypair.secretKey,
+            seqno: await tFAExtension.getSeqno(),
+            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
+            newDeviceId: 1,
+            validUntil: blockchain.now + 180,
+        });
+
+        expect(res.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+
+        let state = await tFAExtension.getRecoverState();
+        if (state.type === 'slow') {
+            expect(state.newDeviceId).toEqual(1);
+            expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+        } else {
+            fail('Expected requested state');
+        }
+
+        // ------ STEP 2 ------
+        blockchain.now += 60 * 60 * 24 * 14;
+
+        const res2 = await tFAExtension.sendSlowRecoverAccess({
+            seedPrivateKey: seedKeypair.secretKey,
+            seqno: await tFAExtension.getSeqno(),
+            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
+            newDeviceId: 1,
+            validUntil: blockchain.now + 180,
+        });
+
+        expect(res2.transactions).toHaveTransaction({
+            to: tFAExtension.address,
+            success: true,
+        });
+
+        state = await tFAExtension.getRecoverState();
+        expect(state.type).toEqual('none');
+
+        expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
+    });
+
     describe('disable', () => {
         let newWalletKeypair: KeyPair;
         let newWallet: WalletContractV5R1;
@@ -977,7 +1025,7 @@ describe('TFAExtension', () => {
                 forwardAmount = toNano('0.3'),
             } = opts;
 
-            const res = await tFAExtension.sendDisable({
+            const res = await tFAExtension.sendDelegation({
                 seedPrivateKey,
                 seqno,
                 validUntil,
@@ -999,7 +1047,7 @@ describe('TFAExtension', () => {
                 validUntil = Math.floor(Date.now() / 1000) + 180,
             } = opts;
 
-            const res = await tFAExtension.sendCancelDisabling({
+            const res = await tFAExtension.sendCancelSlowRecoveryAndDelegation({
                 seedPrivateKey,
                 seqno,
                 validUntil,
@@ -1018,8 +1066,8 @@ describe('TFAExtension', () => {
                 success: true,
             });
 
-            const state: DisableState = await tFAExtension.getDisableState();
-            if (state.type === 'disabling') {
+            const state = await tFAExtension.getRecoverState();
+            if (state.type === 'delegation') {
                 expect(state.newStateInit).toEqualCell(newWalletStateInit);
                 expect(state.forwardAmount).toEqual(toNano('0.3'));
             } else {
@@ -1027,7 +1075,7 @@ describe('TFAExtension', () => {
             }
 
             // STEP 2
-            blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 3;
+            blockchain.now = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 14;
             const res2 = await disableTest({ validUntil: blockchain.now + 180 });
 
             expect(res2.transactions).toHaveTransaction({
@@ -1067,7 +1115,7 @@ describe('TFAExtension', () => {
                 success: true,
             });
 
-            let state = await tFAExtension.getDisableState();
+            let state = await tFAExtension.getRecoverState();
             expect(state.type).toEqual('none');
         });
 
