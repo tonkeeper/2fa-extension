@@ -24,7 +24,6 @@ export function tFAPluginConfigToCell(config: TFAExtensionConfig): Cell {
         .storeAddress(config.wallet)
         .storeUint(0, 256)
         .storeUint(0, 256)
-        .storeDict()
         .storeUint(0, 2)
         .storeUint(0, 64)
         .endCell();
@@ -33,14 +32,9 @@ export function tFAPluginConfigToCell(config: TFAExtensionConfig): Cell {
 export enum OpCode {
     INSTALL = 0x43563174,
     SEND_ACTIONS = 0xb15f2c8c,
-    ADD_DEVICE_KEY = 0x0a73fcb4,
-    REMOVE_DEVICE_KEY = 0xa04d2666,
-    FAST_RECOVER_ACCESS = 0x59c538dd,
-    SLOW_RECOVER_ACCESS = 0xd0029d00,
-    CANCEL_FAST_RECOVERY = 0x30f0a407,
     REMOVE_EXTENSION = 0x9d8084d6,
     DELEGATION = 0x23d9c15c,
-    CANCEL_SLOW_RECOVERY_AND_DELEGATION = 0xde82b501,
+    CANCEL_DELEGATION = 0xde82b501,
 }
 
 export class TFAExtension implements Contract {
@@ -66,7 +60,6 @@ export class TFAExtension implements Contract {
         opts: {
             servicePubkey: bigint;
             seedPubkey: bigint;
-            devicePubkeys: Dictionary<number, bigint>;
         },
     ) {
         await provider.internal(via, {
@@ -76,7 +69,6 @@ export class TFAExtension implements Contract {
                 .storeUint(OpCode.INSTALL, 32)
                 .storeUint(opts.servicePubkey, 256)
                 .storeUint(opts.seedPubkey, 256)
-                .storeDict(opts.devicePubkeys)
                 .endCell(),
         });
     }
@@ -84,8 +76,7 @@ export class TFAExtension implements Contract {
     async sendSendActions(provider: ContractProvider, opts: SendActionsOpts) {
         const body = packTFABody(
             opts.servicePrivateKey,
-            opts.devicePrivateKey,
-            opts.deviceId,
+            opts.seedPrivateKey,
             opts.seqno,
             opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.SEND_ACTIONS,
@@ -94,74 +85,10 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
-    async sendAddDeviceKey(provider: ContractProvider, opts: AuthorizeDeviceOpts) {
+    async sendRemoveExtension(provider: ContractProvider, opts: RemoveExtOpts) {
         const body = packTFABody(
             opts.servicePrivateKey,
-            opts.devicePrivateKey,
-            opts.deviceId,
-            opts.seqno,
-            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
-            OpCode.ADD_DEVICE_KEY,
-            beginCell()
-                .storeUint(opts.newDeviceId, 32)
-                .storeRef(beginCell().storeUint(opts.newDevicePubkey, 256).endCell()),
-        );
-        await this.sendExternal(provider, body);
-    }
-
-    async sendRemoveDeviceKey(provider: ContractProvider, opts: UnathorizeDeviceOpts) {
-        const body = packTFABody(
-            opts.servicePrivateKey,
-            opts.devicePrivateKey,
-            opts.deviceId,
-            opts.seqno,
-            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
-            OpCode.REMOVE_DEVICE_KEY,
-            beginCell().storeUint(opts.removeDeviceId, 32),
-        );
-        await this.sendExternal(provider, body);
-    }
-
-    async sendFastRecoverAccess(provider: ContractProvider, opts: FastRecoverAccessOpts) {
-        const body = packTFASeedBody(
-            opts.servicePrivateKey,
             opts.seedPrivateKey,
-            opts.seqno,
-            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
-            OpCode.FAST_RECOVER_ACCESS,
-            beginCell().storeUint(opts.newDevicePubkey, 256).storeUint(opts.newDeviceId, 32),
-        );
-        await this.sendExternal(provider, body);
-    }
-
-    async sendCancelFastRecovery(provider: ContractProvider, opts: CancelRequestOpts) {
-        const body = packTFASeedBody(
-            opts.servicePrivateKey,
-            opts.seedPrivateKey,
-            opts.seqno,
-            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
-            OpCode.CANCEL_FAST_RECOVERY,
-            beginCell(),
-        );
-        await this.sendExternal(provider, body);
-    }
-
-    async sendSlowRecoverAccess(provider: ContractProvider, opts: SlowRecoverAccessOpts) {
-        const body = packSeedBody(
-            opts.seedPrivateKey,
-            opts.seqno,
-            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
-            OpCode.SLOW_RECOVER_ACCESS,
-            beginCell().storeUint(opts.newDevicePubkey, 256).storeUint(opts.newDeviceId, 32),
-        );
-        await this.sendExternal(provider, body);
-    }
-
-    async sendRemoveExtension(provider: ContractProvider, opts: DestructOpts) {
-        const body = packTFABody(
-            opts.servicePrivateKey,
-            opts.devicePrivateKey,
-            opts.deviceId,
             opts.seqno,
             opts.validUntil || Math.floor(Date.now() / 1000) + 120,
             OpCode.REMOVE_EXTENSION,
@@ -170,7 +97,7 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
-    async sendDelegation(provider: ContractProvider, opts: DisableOpts) {
+    async sendDelegation(provider: ContractProvider, opts: DelegationOpts) {
         const body = packSeedBody(
             opts.seedPrivateKey,
             opts.seqno,
@@ -181,12 +108,12 @@ export class TFAExtension implements Contract {
         await this.sendExternal(provider, body);
     }
 
-    async sendCancelSlowRecoveryAndDelegation(provider: ContractProvider, opts: CancelDisablingOpts) {
+    async sendCancelDelegation(provider: ContractProvider, opts: CancelDelegationOpts) {
         const body = packSeedBody(
             opts.seedPrivateKey,
             opts.seqno,
             opts.validUntil || Math.floor(Date.now() / 1000) + 120,
-            OpCode.CANCEL_SLOW_RECOVERY_AND_DELEGATION,
+            OpCode.CANCEL_DELEGATION,
             beginCell(),
         );
         await this.sendExternal(provider, body);
@@ -216,64 +143,32 @@ export class TFAExtension implements Contract {
         return res.stack.readBigNumber();
     }
 
-    async getDevicePubkeys(provider: ContractProvider): Promise<Dictionary<number, bigint>> {
-        const res = await provider.get('get_device_pubkeys', []);
-        try {
-            const cell = res.stack.readCell();
-            return Dictionary.load(Dictionary.Keys.Uint(32), Dictionary.Values.BigUint(256), cell);
-        } catch (e) {
-            return Dictionary.empty(Dictionary.Keys.Uint(32), Dictionary.Values.BigUint(256));
-        }
-    }
-
-    async getDevicePubkey(provider: ContractProvider, devicePubkeyId: number): Promise<bigint> {
-        const res = await provider.get('get_device_pubkey', [{ type: 'int', value: BigInt(devicePubkeyId) }]);
-        return res.stack.readBigNumber();
-    }
-
-    async getRecoverState(provider: ContractProvider): Promise<RecoverState> {
-        const res = await provider.get('get_recover_state', []);
+    async getDelegationState(provider: ContractProvider): Promise<DelegationState> {
+        const res = await provider.get('get_delegation_state', []);
         const stack = res.stack;
         const recoveryState = stack.readNumber();
-        const recoveryBlockedUntil = stack.readNumber();
+        const blockedUntil = stack.readNumber();
         const data = stack.readTuple();
 
         switch (recoveryState) {
             case 0:
                 return {
                     type: 'none',
-                    recoveryBlockedUntil,
+                    blockedUntil,
                 };
             case 1:
-                return {
-                    type: 'fast',
-                    newDeviceId: data.readNumber(),
-                    newDevicePubkey: data.readBigNumber(),
-                    recoveryBlockedUntil,
-                };
-            case 2:
-                return {
-                    type: 'slow',
-                    newDeviceId: data.readNumber(),
-                    newDevicePubkey: data.readBigNumber(),
-                    recoveryBlockedUntil,
-                };
-            case 3:
                 return {
                     type: 'delegation',
                     newStateInit: data.readCell(),
                     forwardAmount: data.readBigNumber(),
-                    recoveryBlockedUntil,
+                    blockedUntil,
                 };
             default:
-                return {
-                    type: 'none',
-                    recoveryBlockedUntil: stack.readNumber(),
-                };
+                throw new Error(`Unknown recovery state: ${recoveryState}`);
         }
     }
 
-    async getEstimatedFees(
+    async getEstimatedAttachedValue(
         provider: ContractProvider,
         opts: {
             forwardMsg: Cell;
@@ -281,7 +176,7 @@ export class TFAExtension implements Contract {
             extendedActionCount: number;
         },
     ): Promise<bigint> {
-        const res = await provider.get('get_gas_fee_for_processing_send_actions', [
+        const res = await provider.get('get_estimated_attached_value', [
             { type: 'cell', cell: opts.forwardMsg },
             { type: 'int', value: BigInt(opts.outputMsgCount) },
             { type: 'int', value: BigInt(opts.extendedActionCount) },
@@ -290,48 +185,19 @@ export class TFAExtension implements Contract {
     }
 }
 
-export type RecoverState = { recoveryBlockedUntil: number } & (
-    | {
-          type: 'slow';
-          newDeviceId: number;
-          newDevicePubkey: bigint;
-      }
-    | {
-          type: 'fast';
-          newDeviceId: number;
-          newDevicePubkey: bigint;
-      }
+export type DelegationState =
     | {
           type: 'delegation';
+          blockedUntil: number;
           newStateInit: Cell;
           forwardAmount: bigint;
       }
     | {
           type: 'none';
-      }
-);
-
-export type DisableState =
-    | {
-          type: 'disabling';
-          disablingBlockedUntil: number;
-          newStateInit: Cell;
-          forwardAmount: bigint;
-      }
-    | {
-          type: 'none';
-          disablingBlockedUntil: number;
+          blockedUntil: number;
       };
 
-export type TFAAuthDevice = {
-    servicePrivateKey: Buffer;
-    devicePrivateKey: Buffer;
-    deviceId: number;
-    seqno: number;
-    validUntil?: number;
-};
-
-export type TFAAuthSeed = {
+export type TFAAuth = {
     servicePrivateKey: Buffer;
     seedPrivateKey: Buffer;
     seqno: number;
@@ -344,68 +210,21 @@ export type AuthSeed = {
     validUntil?: number;
 };
 
-export type SendActionsOpts = TFAAuthDevice & {
+export type SendActionsOpts = TFAAuth & {
     msg: Cell;
     sendMode: SendMode;
 };
 
-export type AuthorizeDeviceOpts = TFAAuthDevice & {
-    newDevicePubkey: bigint;
-    newDeviceId: number;
-};
+export type RemoveExtOpts = TFAAuth;
 
-export type UnathorizeDeviceOpts = TFAAuthDevice & {
-    removeDeviceId: number;
-};
-
-export type FastRecoverAccessOpts = TFAAuthSeed & {
-    newDevicePubkey: bigint;
-    newDeviceId: number;
-};
-
-export type SlowRecoverAccessOpts = AuthSeed & {
-    newDevicePubkey: bigint;
-    newDeviceId: number;
-};
-
-export type CancelRequestOpts = TFAAuthSeed;
-
-export type DestructOpts = TFAAuthDevice;
-
-export type DisableOpts = AuthSeed & {
+export type DelegationOpts = AuthSeed & {
     newStateInit: Cell;
     forwardAmount: bigint;
 };
 
-export type CancelDisablingOpts = AuthSeed;
+export type CancelDelegationOpts = AuthSeed;
 
 export function packTFABody(
-    servicePrivateKey: Buffer,
-    devicePrivateKey: Buffer,
-    deviceId: number,
-    seqno: number,
-    validUntil: number,
-    opCode: OpCode,
-    payload: Builder,
-): Cell {
-    const dataToSign = beginCell()
-        .storeUint(opCode, 32)
-        .storeUint(seqno, 32)
-        .storeUint(validUntil, 64)
-        .storeBuilder(payload)
-        .endCell();
-    const signature1 = sign(dataToSign.hash(), servicePrivateKey);
-    const signature2 = sign(dataToSign.hash(), devicePrivateKey);
-
-    const body = beginCell()
-        .storeBuffer(signature1)
-        .storeRef(beginCell().storeBuffer(signature2).storeUint(deviceId, 32))
-        .storeSlice(dataToSign.beginParse());
-
-    return body.endCell();
-}
-
-export function packTFASeedBody(
     servicePrivateKey: Buffer,
     seedPrivateKey: Buffer,
     seqno: number,

@@ -13,7 +13,7 @@ import {
     TransactionDescription,
     TransactionDescriptionGeneric,
 } from '@ton/core';
-import { DisableState, RecoverState, TFAExtension } from '../wrappers/TFAExtension';
+import { TFAExtension } from '../wrappers/TFAExtension';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { getSecureRandomBytes, KeyPair, keyPairFromSeed, sign } from '@ton/crypto';
@@ -38,7 +38,6 @@ describe('TFAExtension', () => {
 
     let serviceKeypair: KeyPair;
     let seedKeypair: KeyPair;
-    let deviceKeypairs: KeyPair[];
     let walletKeypair: KeyPair;
 
     let firstInstall = true;
@@ -49,7 +48,6 @@ describe('TFAExtension', () => {
 
         serviceKeypair = await randomKeypair();
         seedKeypair = await randomKeypair();
-        deviceKeypairs = [await randomKeypair()];
         walletKeypair = await randomKeypair();
 
         walletV5 = blockchain.openContract(
@@ -79,7 +77,6 @@ describe('TFAExtension', () => {
         const deployResult = await tFAExtension.sendDeploy(sender, toNano('1.5'), {
             servicePubkey: bufferToBigInt(serviceKeypair.publicKey),
             seedPubkey: bufferToBigInt(seedKeypair.publicKey),
-            devicePubkeys: keysToDict(deviceKeypairs),
         });
 
         expect(deployResult.transactions).toHaveTransaction({
@@ -116,9 +113,8 @@ describe('TFAExtension', () => {
         expect(await tFAExtension.getWalletAddr()).toEqualAddress(walletV5.address);
         expect(await tFAExtension.getServicePubkey()).toEqual(bufferToBigInt(serviceKeypair.publicKey));
         expect(await tFAExtension.getSeedPubkey()).toEqual(bufferToBigInt(seedKeypair.publicKey));
-        expect(await tFAExtension.getDevicePubkey(0)).toEqual(bufferToBigInt(deviceKeypairs[0].publicKey));
-        const recoverState = await tFAExtension.getRecoverState();
-        expect(recoverState.type).toEqual('none');
+        const delegationState = await tFAExtension.getDelegationState();
+        expect(delegationState.type).toEqual('none');
     });
 
     async function shouldFail(f: Promise<any>) {
@@ -146,8 +142,7 @@ describe('TFAExtension', () => {
             prefix: string,
             opts: {
                 servicePrivateKey?: Buffer;
-                devicePrivateKey?: Buffer;
-                deviceId?: number;
+                seedPrivateKey?: Buffer;
                 actions: OutActionWalletV5[];
                 refill?: boolean;
                 logGasUsage?: boolean;
@@ -157,8 +152,7 @@ describe('TFAExtension', () => {
         ) {
             let {
                 servicePrivateKey = serviceKeypair.secretKey,
-                devicePrivateKey = deviceKeypairs[0].secretKey,
-                deviceId = 0,
+                seedPrivateKey = seedKeypair.secretKey,
                 actions = [],
                 refill = false,
                 logGasUsage = false,
@@ -187,7 +181,7 @@ describe('TFAExtension', () => {
                 value: toNano('0.1'),
                 body: request,
             });
-            const txFees = await tFAExtension.getEstimatedFees({
+            const txFees = await tFAExtension.getEstimatedAttachedValue({
                 forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
                 outputMsgCount: actions.length,
                 extendedActionCount: 0,
@@ -199,8 +193,7 @@ describe('TFAExtension', () => {
             });
             const res1 = await tFAExtension.sendSendActions({
                 servicePrivateKey: servicePrivateKey,
-                devicePrivateKey: devicePrivateKey,
-                deviceId,
+                seedPrivateKey: seedPrivateKey,
                 seqno,
                 validUntil,
                 msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
@@ -320,19 +313,10 @@ describe('TFAExtension', () => {
             );
         });
 
-        it('should not send actions with wrong devicePrivateKey', async () => {
+        it('should not send actions with wrong seedPrivateKey', async () => {
             await shouldFail(
                 testSendActions('Wrong Device Private Key', {
-                    devicePrivateKey: (await randomKeypair()).secretKey,
-                    actions: [],
-                }),
-            );
-        });
-
-        it('should not send actions with wrong deviceId', async () => {
-            await shouldFail(
-                testSendActions('Wrong Device Id', {
-                    deviceId: 1,
+                    seedPrivateKey: (await randomKeypair()).secretKey,
                     actions: [],
                 }),
             );
@@ -356,13 +340,12 @@ describe('TFAExtension', () => {
             );
         });
 
-        it('should not send actions if recover process is started', async () => {
-            await tFAExtension.sendFastRecoverAccess({
-                servicePrivateKey: serviceKeypair.secretKey,
+        it('should not send actions if delegation is started', async () => {
+            await tFAExtension.sendDelegation({
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
-                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
-                newDeviceId: 1,
+                newStateInit: beginCell().endCell(),
+                forwardAmount: toNano('0.3'),
             });
 
             await shouldFail(
@@ -373,194 +356,23 @@ describe('TFAExtension', () => {
         });
     });
 
-    describe('authorizeDevice', () => {
-        async function authorizeDeviceTest(opts: {
-            servicePrivateKey?: Buffer;
-            devicePrivateKey?: Buffer;
-            deviceId?: number;
-            newDevicePubkey?: Buffer;
-            newDeviceId?: number;
-            validUntil?: number;
-            seqno?: number;
-        }): Promise<[SendMessageResult, Buffer]> {
-            let {
-                servicePrivateKey = serviceKeypair.secretKey,
-                devicePrivateKey = deviceKeypairs[0].secretKey,
-                deviceId = 0,
-                newDevicePubkey = null,
-                newDeviceId = 1,
-                validUntil = Math.floor(Date.now() / 1000) + 180,
-                seqno = await tFAExtension.getSeqno(),
-            } = opts;
-
-            if (newDevicePubkey === null) {
-                newDevicePubkey = (await randomKeypair()).publicKey;
-            }
-
-            const res = await tFAExtension.sendAddDeviceKey({
-                servicePrivateKey,
-                devicePrivateKey,
-                deviceId,
-                seqno,
-                validUntil,
-                newDevicePubkey: bufferToBigInt(newDevicePubkey),
-                newDeviceId,
-            });
-
-            return [res, newDevicePubkey];
-        }
-
-        it('should authorize devices', async () => {
-            const [res, newDevicePubkey] = await authorizeDeviceTest({});
-
-            expect(res.transactions).toHaveTransaction({
-                to: tFAExtension.address,
-                success: true,
-            });
-            expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDevicePubkey));
-            expect(await tFAExtension.getSeqno()).toEqual(2);
-        });
-
-        it('should not authorize devices with wrong servicePrivateKey', async () => {
-            const randomNewKeypair = await randomKeypair();
-            await shouldFail(authorizeDeviceTest({ servicePrivateKey: randomNewKeypair.secretKey }));
-        });
-
-        it('should not authorize devices with wrong devicePrivateKey', async () => {
-            const randomNewKeypair = await randomKeypair();
-            await shouldFail(authorizeDeviceTest({ devicePrivateKey: randomNewKeypair.secretKey }));
-        });
-
-        it('should not authorize devices with wrong deviceId', async () => {
-            await shouldFail(authorizeDeviceTest({ deviceId: 1 }));
-        });
-
-        it('should not authorize devices with existing newDeviceId', async () => {
-            await shouldFail(authorizeDeviceTest({ newDeviceId: 0 }));
-        });
-
-        it('should not authorize devices with wrong validUntil', async () => {
-            await shouldFail(authorizeDeviceTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
-        });
-
-        it('should not authorize devices with wrong seqno', async () => {
-            await shouldFail(authorizeDeviceTest({ seqno: 0 }));
-        });
-
-        it('should not authorize device if recover process is started', async () => {
-            await tFAExtension.sendFastRecoverAccess({
-                servicePrivateKey: serviceKeypair.secretKey,
-                seedPrivateKey: seedKeypair.secretKey,
-                seqno: 1,
-                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
-                newDeviceId: 1,
-            });
-
-            await shouldFail(authorizeDeviceTest({}));
-        });
-    });
-
-    describe('unauthorizeDevice', () => {
-        async function unauthorizeDeviceTest(opts: {
-            servicePrivateKey?: Buffer;
-            devicePrivateKey?: Buffer;
-            deviceId?: number;
-            removeDeviceId?: number;
-            validUntil?: number;
-            seqno?: number;
-        }): Promise<SendMessageResult> {
-            let {
-                servicePrivateKey = serviceKeypair.secretKey,
-                devicePrivateKey = deviceKeypairs[0].secretKey,
-                deviceId = 0,
-                removeDeviceId = 0,
-                validUntil = Math.floor(Date.now() / 1000) + 180,
-                seqno = await tFAExtension.getSeqno(),
-            } = opts;
-
-            const res = await tFAExtension.sendRemoveDeviceKey({
-                servicePrivateKey,
-                devicePrivateKey,
-                deviceId,
-                seqno,
-                removeDeviceId,
-                validUntil,
-            });
-
-            return res;
-        }
-        it('should unauthorize devices', async () => {
-            const res = await unauthorizeDeviceTest({});
-
-            expect(res.transactions).toHaveTransaction({
-                to: tFAExtension.address,
-                success: true,
-            });
-
-            const pubkeys: Dictionary<number, bigint> = await tFAExtension.getDevicePubkeys();
-
-            expect(pubkeys.keys().length).toEqual(0);
-        });
-
-        it('should not unauthorize devices with wrong servicePrivateKey', async () => {
-            const randomNewKeypair = await randomKeypair();
-            await shouldFail(unauthorizeDeviceTest({ servicePrivateKey: randomNewKeypair.secretKey }));
-        });
-
-        it('should not unauthorize devices with wrong devicePrivateKey', async () => {
-            const randomNewKeypair = await randomKeypair();
-            await shouldFail(unauthorizeDeviceTest({ devicePrivateKey: randomNewKeypair.secretKey }));
-        });
-
-        it('should not unauthorize devices with wrong deviceId', async () => {
-            await shouldFail(unauthorizeDeviceTest({ deviceId: 1 }));
-        });
-
-        it('should not unauthorize devices with wrong removeDeviceId', async () => {
-            await shouldFail(unauthorizeDeviceTest({ removeDeviceId: 1 }));
-        });
-
-        it('should not unauthorize devices with wrong validUntil', async () => {
-            await shouldFail(unauthorizeDeviceTest({ validUntil: Math.floor(Date.now() / 1000) - 1 }));
-        });
-
-        it('should not unauthorize devices with wrong seqno', async () => {
-            await shouldFail(unauthorizeDeviceTest({ seqno: 0 }));
-        });
-
-        it('should not unauthorize device if recover process is started', async () => {
-            await tFAExtension.sendFastRecoverAccess({
-                servicePrivateKey: serviceKeypair.secretKey,
-                seedPrivateKey: seedKeypair.secretKey,
-                seqno: 1,
-                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
-                newDeviceId: 1,
-            });
-
-            await shouldFail(unauthorizeDeviceTest({}));
-        });
-    });
-
     describe('remove extension', () => {
         async function destructTest(opts: {
             servicePrivateKey?: Buffer;
-            devicePrivateKey?: Buffer;
-            deviceId?: number;
+            seedPrivateKey?: Buffer;
             validUntil?: number;
             seqno?: number;
         }): Promise<SendMessageResult> {
             let {
                 servicePrivateKey = serviceKeypair.secretKey,
-                devicePrivateKey = deviceKeypairs[0].secretKey,
-                deviceId = 0,
+                seedPrivateKey = seedKeypair.secretKey,
                 validUntil = Math.floor(Date.now() / 1000) + 180,
                 seqno = await tFAExtension.getSeqno(),
             } = opts;
 
             const res = await tFAExtension.sendRemoveExtension({
                 servicePrivateKey,
-                devicePrivateKey,
-                deviceId,
+                seedPrivateKey,
                 seqno,
                 validUntil,
             });
@@ -593,7 +405,7 @@ describe('TFAExtension', () => {
                 (res.transactions[2].description as TransactionDescriptionGeneric).computePhase as TransactionComputeVm
             ).gasUsed;
 
-            expect(confirmationGasUsed).toEqual(2755n);
+            expect(confirmationGasUsed).toEqual(2729n);
         });
 
         it('should not destruct with wrong servicePrivateKey', async () => {
@@ -601,13 +413,9 @@ describe('TFAExtension', () => {
             await shouldFail(destructTest({ servicePrivateKey: randomNewKeypair.secretKey }));
         });
 
-        it('should not destruct with wrong devicePrivateKey', async () => {
+        it('should not destruct with wrong seedPrivateKey', async () => {
             const randomNewKeypair = await randomKeypair();
-            await shouldFail(destructTest({ devicePrivateKey: randomNewKeypair.secretKey }));
-        });
-
-        it('should not destruct with wrong deviceId', async () => {
-            await shouldFail(destructTest({ deviceId: 1 }));
+            await shouldFail(destructTest({ seedPrivateKey: randomNewKeypair.secretKey }));
         });
 
         it('should not destruct with wrong validUntil', async () => {
@@ -618,385 +426,16 @@ describe('TFAExtension', () => {
             await shouldFail(destructTest({ seqno: 0 }));
         });
 
-        it('should not destruct if recover process is started', async () => {
-            await tFAExtension.sendFastRecoverAccess({
-                servicePrivateKey: serviceKeypair.secretKey,
+        it('should not destruct if delegation is started', async () => {
+            await tFAExtension.sendDelegation({
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
-                newDevicePubkey: bufferToBigInt(deviceKeypairs[0].publicKey),
-                newDeviceId: 1,
+                newStateInit: beginCell().endCell(),
+                forwardAmount: toNano('0.3'),
             });
 
             await shouldFail(destructTest({}));
         });
-    });
-
-    describe('fast recover', () => {
-        async function recoverTest(opts: {
-            servicePrivateKey?: Buffer;
-            seedPrivateKey?: Buffer;
-            seqno?: number;
-            newDevicePubkey?: Buffer;
-            newDeviceId?: number;
-            validUntil?: number;
-        }): Promise<SendMessageResult> {
-            let {
-                servicePrivateKey = serviceKeypair.secretKey,
-                seedPrivateKey = seedKeypair.secretKey,
-                seqno = await tFAExtension.getSeqno(),
-                newDevicePubkey = null,
-                newDeviceId = 1,
-                validUntil = Math.floor(Date.now() / 1000) + 180,
-            } = opts;
-
-            if (newDevicePubkey === null) {
-                newDevicePubkey = (await randomKeypair()).publicKey;
-            }
-
-            const res = await tFAExtension.sendFastRecoverAccess({
-                servicePrivateKey,
-                seedPrivateKey,
-                seqno,
-                newDevicePubkey: bufferToBigInt(newDevicePubkey),
-                newDeviceId,
-                validUntil,
-            });
-
-            return res;
-        }
-
-        async function cancelTest(opts: {
-            servicePrivateKey?: Buffer;
-            seedPrivateKey?: Buffer;
-            seqno?: number;
-            validUntil?: number;
-        }): Promise<SendMessageResult> {
-            let {
-                servicePrivateKey = serviceKeypair.secretKey,
-                seedPrivateKey = seedKeypair.secretKey,
-                seqno = await tFAExtension.getSeqno(),
-                validUntil = Math.floor(Date.now() / 1000) + 180,
-            } = opts;
-
-            const res = await tFAExtension.sendCancelFastRecovery({
-                servicePrivateKey,
-                seedPrivateKey,
-                seqno,
-                validUntil,
-            });
-
-            return res;
-        }
-
-        it('should recover access', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            const res = await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            expect(res.transactions).toHaveTransaction({
-                to: tFAExtension.address,
-                success: true,
-            });
-            let state: RecoverState = await tFAExtension.getRecoverState();
-            if (state.type === 'fast') {
-                expect(state.newDeviceId).toEqual(1);
-                expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
-            } else {
-                fail('Expected requested state');
-            }
-
-            // ------ STEP 2 ------
-            blockchain.now += 60 * 60 * 24;
-
-            const res2 = await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            expect(res2.transactions).toHaveTransaction({
-                to: tFAExtension.address,
-                success: true,
-            });
-
-            state = await tFAExtension.getRecoverState();
-            expect(state.type).toEqual('none');
-
-            expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
-        });
-
-        it('should cancel recover access', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            // ------ STEP 2 ------
-            const res2 = await cancelTest({});
-
-            expect(res2.transactions).toHaveTransaction({
-                to: tFAExtension.address,
-                success: true,
-            });
-
-            let state = await tFAExtension.getRecoverState();
-            expect(state.type).toEqual('none');
-        });
-
-        it('should recover after recover process is canceled', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            // ------ STEP 2 ------
-            await cancelTest({});
-
-            // ------ STEP 3 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            let state = await tFAExtension.getRecoverState();
-            expect(state.type).toEqual('fast');
-        });
-
-        it('should not recover if device pubkey is wrong on step 2', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            // ------ STEP 2 ------
-            await shouldFail(
-                recoverTest({
-                    newDevicePubkey: (await randomKeypair()).publicKey,
-                    newDeviceId: 1,
-                    validUntil: blockchain.now + 180,
-                }),
-            );
-        });
-
-        it('should not recover if device id is wrong on step 2', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            // ------ STEP 2 ------
-            await shouldFail(
-                recoverTest({
-                    newDevicePubkey: newDeviceKeypair.publicKey,
-                    newDeviceId: 2,
-                    validUntil: blockchain.now + 180,
-                }),
-            );
-        });
-
-        it('should not recover if servicePrivateKey is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-
-            await shouldFail(
-                recoverTest({
-                    servicePrivateKey: (await randomKeypair()).secretKey,
-                    newDevicePubkey: newDeviceKeypair.publicKey,
-                    newDeviceId: 1,
-                }),
-            );
-        });
-
-        it('should not recover if seedPrivateKey is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-
-            await shouldFail(
-                recoverTest({
-                    seedPrivateKey: (await randomKeypair()).secretKey,
-                    newDevicePubkey: newDeviceKeypair.publicKey,
-                    newDeviceId: 1,
-                }),
-            );
-        });
-
-        it('should not recover if seqno is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-
-            await shouldFail(
-                recoverTest({
-                    seqno: 0,
-                    newDevicePubkey: newDeviceKeypair.publicKey,
-                    newDeviceId: 1,
-                }),
-            );
-        });
-
-        it('should not recover if validUntil is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-
-            await shouldFail(
-                recoverTest({
-                    validUntil: Math.floor(Date.now() / 1000) - 1,
-                    newDevicePubkey: newDeviceKeypair.publicKey,
-                    newDeviceId: 1,
-                }),
-            );
-        });
-
-        it('should not recover before delay is over', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            // ------ STEP 2 ------
-            await shouldFail(
-                recoverTest({
-                    newDevicePubkey: newDeviceKeypair.publicKey,
-                    newDeviceId: 1,
-                    validUntil: blockchain.now + 180,
-                }),
-            );
-        });
-
-        it('should not cancel if recover is not started', async () => {
-            await shouldFail(cancelTest({}));
-        });
-
-        it('should not cancel if servicePrivateKey is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            await shouldFail(cancelTest({ servicePrivateKey: (await randomKeypair()).secretKey }));
-        });
-
-        it('should not cancel if seedPrivateKey is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            await shouldFail(cancelTest({ seedPrivateKey: (await randomKeypair()).secretKey }));
-        });
-
-        it('should not cancel if seqno is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            await shouldFail(cancelTest({ seqno: 0 }));
-        });
-
-        it('should not cancel if validUntil is wrong', async () => {
-            const newDeviceKeypair = await randomKeypair();
-            blockchain.now = Math.floor(Date.now() / 1000);
-
-            // ------ STEP 1 ------
-            await recoverTest({
-                newDevicePubkey: newDeviceKeypair.publicKey,
-                newDeviceId: 1,
-                validUntil: blockchain.now + 180,
-            });
-
-            await shouldFail(cancelTest({ validUntil: blockchain.now - 1 }));
-        });
-    });
-
-    it('should slow recover', async () => {
-        const newDeviceKeypair = await randomKeypair();
-        blockchain.now = Math.floor(Date.now() / 1000);
-
-        // ------ STEP 1 ------
-        const res = await tFAExtension.sendSlowRecoverAccess({
-            seedPrivateKey: seedKeypair.secretKey,
-            seqno: await tFAExtension.getSeqno(),
-            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
-            newDeviceId: 1,
-            validUntil: blockchain.now + 180,
-        });
-
-        expect(res.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
-        });
-
-        let state = await tFAExtension.getRecoverState();
-        if (state.type === 'slow') {
-            expect(state.newDeviceId).toEqual(1);
-            expect(state.newDevicePubkey).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
-        } else {
-            fail('Expected requested state');
-        }
-
-        // ------ STEP 2 ------
-        blockchain.now += 60 * 60 * 24 * 14;
-
-        const res2 = await tFAExtension.sendSlowRecoverAccess({
-            seedPrivateKey: seedKeypair.secretKey,
-            seqno: await tFAExtension.getSeqno(),
-            newDevicePubkey: bufferToBigInt(newDeviceKeypair.publicKey),
-            newDeviceId: 1,
-            validUntil: blockchain.now + 180,
-        });
-
-        expect(res2.transactions).toHaveTransaction({
-            to: tFAExtension.address,
-            success: true,
-        });
-
-        state = await tFAExtension.getRecoverState();
-        expect(state.type).toEqual('none');
-
-        expect(await tFAExtension.getDevicePubkey(1)).toEqual(bufferToBigInt(newDeviceKeypair.publicKey));
     });
 
     describe('delegation', () => {
@@ -1054,7 +493,7 @@ describe('TFAExtension', () => {
                 validUntil = Math.floor(Date.now() / 1000) + 180,
             } = opts;
 
-            const res = await tFAExtension.sendCancelSlowRecoveryAndDelegation({
+            const res = await tFAExtension.sendCancelDelegation({
                 seedPrivateKey,
                 seqno,
                 validUntil,
@@ -1073,7 +512,7 @@ describe('TFAExtension', () => {
                 success: true,
             });
 
-            const state = await tFAExtension.getRecoverState();
+            const state = await tFAExtension.getDelegationState();
             if (state.type === 'delegation') {
                 expect(state.newStateInit).toEqualCell(newWalletStateInit);
                 expect(state.forwardAmount).toEqual(toNano('0.3'));
@@ -1122,7 +561,7 @@ describe('TFAExtension', () => {
                 success: true,
             });
 
-            let state = await tFAExtension.getRecoverState();
+            let state = await tFAExtension.getDelegationState();
             expect(state.type).toEqual('none');
         });
 
@@ -1256,7 +695,7 @@ describe('TFAExtension', () => {
                 value: toNano('0.1'),
                 body: actions,
             });
-            const txFees = await tFAExtension.getEstimatedFees({
+            const txFees = await tFAExtension.getEstimatedAttachedValue({
                 forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
                 outputMsgCount: 1,
                 extendedActionCount: 0,
@@ -1269,8 +708,7 @@ describe('TFAExtension', () => {
 
             const res = await tFAExtension.sendSendActions({
                 servicePrivateKey: serviceKeypair.secretKey,
-                devicePrivateKey: deviceKeypairs[0].secretKey,
-                deviceId: 0,
+                seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
                 msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
                 sendMode: SendMode.NONE,
@@ -1384,7 +822,7 @@ describe('TFAExtension', () => {
                 value: toNano('0.1'),
                 body: actions,
             });
-            const txFees = await tFAExtension.getEstimatedFees({
+            const txFees = await tFAExtension.getEstimatedAttachedValue({
                 forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
                 outputMsgCount: actionsList.length,
                 extendedActionCount: 0,
@@ -1396,8 +834,7 @@ describe('TFAExtension', () => {
             });
             const res = await tFAExtension.sendSendActions({
                 servicePrivateKey: serviceKeypair.secretKey,
-                devicePrivateKey: deviceKeypairs[0].secretKey,
-                deviceId: 0,
+                seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
                 msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
                 sendMode: SendMode.NONE,
