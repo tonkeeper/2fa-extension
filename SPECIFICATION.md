@@ -91,7 +91,7 @@ return body.endCell();
 ```tlb
 signed_2fa_external#_ 
     service_signature:bits512 
-    ref_with_device_signature:^[device_signature:bits512 device_id:uint32] 
+    ref_with_seed_signature:^[seed_signature:bits512] 
     op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
     = ExternalMsgBody;
 signed_seed_external#_
