@@ -157,7 +157,7 @@ with the `new_state_init` state.
 Requires [Seed](#Seed-Authorization) authorization.
 
 ```tl-b
-cancel_delegation#b3b4b8f3 = ExternalMessage;
+cancel_delegation#de82b501 = ExternalMessage;
 ```
 
 This method is used to cancel `delegation`. If the current state is `delegation`, it resets to the
@@ -171,7 +171,7 @@ install#43563174 service_pubkey:uint256 seed_pubkey:uint256 device_pubkeys:(Dict
 send_actions#b15f2c8c msg:^Cell mode:uint8 = ExternalMessage;
 remove_extension#9d8084d6 = ExternalMessage;
 delegation#23d9c15c new_state_init:^Cell forward_amount:Coins = ExternalMessage;
-cancel_delegation#b3b4b8f3 = ExternalMessage;
+cancel_delegation#de82b501 = ExternalMessage;
 ```
 
 ## Get Methods
