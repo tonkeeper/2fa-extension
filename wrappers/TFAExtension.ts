@@ -58,7 +58,7 @@ export class TFAExtension implements Contract {
         via: Sender,
         value: bigint,
         opts: {
-            servicePubkey: bigint;
+            rootCAPubkey: bigint;
             seedPubkey: bigint;
         },
     ) {
@@ -67,7 +67,7 @@ export class TFAExtension implements Contract {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             body: beginCell()
                 .storeUint(OpCode.INSTALL, 32)
-                .storeUint(opts.servicePubkey, 256)
+                .storeUint(opts.rootCAPubkey, 256)
                 .storeUint(opts.seedPubkey, 256)
                 .endCell(),
         });
@@ -75,7 +75,7 @@ export class TFAExtension implements Contract {
 
     async sendSendActions(provider: ContractProvider, opts: SendActionsOpts) {
         const body = packTFABody(
-            opts.servicePrivateKey,
+            opts.certificate,
             opts.seedPrivateKey,
             opts.seqno,
             opts.validUntil || Math.floor(Date.now() / 1000) + 120,
@@ -87,7 +87,7 @@ export class TFAExtension implements Contract {
 
     async sendRemoveExtension(provider: ContractProvider, opts: RemoveExtOpts) {
         const body = packTFABody(
-            opts.servicePrivateKey,
+            opts.certificate,
             opts.seedPrivateKey,
             opts.seqno,
             opts.validUntil || Math.floor(Date.now() / 1000) + 120,
@@ -133,8 +133,8 @@ export class TFAExtension implements Contract {
         return res.stack.readAddress();
     }
 
-    async getServicePubkey(provider: ContractProvider): Promise<bigint> {
-        const res = await provider.get('get_service_pubkey', []);
+    async getRootPubkey(provider: ContractProvider): Promise<bigint> {
+        const res = await provider.get('get_root_pubkey', []);
         return res.stack.readBigNumber();
     }
 
@@ -197,9 +197,15 @@ export type DelegationState =
           blockedUntil: number;
       };
 
+export type Certificate = {
+    keypair: KeyPair;
+    validUntil: number;
+    signature: Buffer;
+};
+
 export type TFAAuth = {
-    servicePrivateKey: Buffer;
     seedPrivateKey: Buffer;
+    certificate: Certificate;
     seqno: number;
     validUntil?: number;
 };
@@ -225,7 +231,7 @@ export type DelegationOpts = AuthSeed & {
 export type CancelDelegationOpts = AuthSeed;
 
 export function packTFABody(
-    servicePrivateKey: Buffer,
+    certificate: Certificate,
     seedPrivateKey: Buffer,
     seqno: number,
     validUntil: number,
@@ -238,11 +244,18 @@ export function packTFABody(
         .storeUint(validUntil, 64)
         .storeBuilder(payload)
         .endCell();
-    const signature1 = sign(dataToSign.hash(), servicePrivateKey);
+    const signature1 = sign(dataToSign.hash(), certificate.keypair.secretKey);
     const signature2 = sign(dataToSign.hash(), seedPrivateKey);
+
+    const cert = beginCell()
+        .storeUint(certificate.validUntil, 64)
+        .storeBuffer(certificate.keypair.publicKey)
+        .storeBuffer(certificate.signature)
+        .endCell();
 
     const body = beginCell()
         .storeBuffer(signature1)
+        .storeRef(cert)
         .storeRef(beginCell().storeBuffer(signature2))
         .storeSlice(dataToSign.beginParse());
 

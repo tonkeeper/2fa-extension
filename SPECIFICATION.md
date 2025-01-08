@@ -2,10 +2,30 @@
 
 ## Terminology
 
-### **Service Key (SK)**
+### **Root Key**
+
+Root key is a key that is used to sign Certificate by the Tonkeeper.
+
+### **Service Key**
 
 The service key is stored on the Tonkeeper backend and is required to sign any message sent to the extension. Any
-message signed with the Seed must be signed with the SK as well. The SK is unique for each account.
+message signed with the Seed must be signed with the SK as well. The SK is passed to the extension in the Certificate.
+Extension uses Root public key to verify the SK.
+
+### **Certificate**
+
+Certificate is a Cell that contains following data:
+
+- `valid_until` - the timestamp until the certificate is valid.
+- `service_pubkey` - the public key of the Certificate.
+- `signature` - the signature of the `[valid_until, service_pubkey]` by the Root key.
+
+TL-B:
+
+```tlb
+certificate_data$_ valid_until:uint64 service_pubkey:uint256 = CertificateData;
+certificate$_ data:CertificateData signature:bits512 = Certificate;
+```
 
 ## Installing extension
 
@@ -13,10 +33,10 @@ When installing the extension, following steps should be taken:
 1. Add the extension to the list of extensions in the wallet.
 2. Create and send a message to the extension with the following scheme:
 ```tl-b
-install#43563174 service_pubkey:uint256 seed_pubkey:uint256 = InternalMessage;
+install#43563174 root_pubkey:uint256 seed_pubkey:uint256 = InternalMessage;
 ```
 where:
-- `service_pubkey` is the public key of the service key.
+- `root_pubkey` is the public key of the Root.
 - `seed_pubkey` is the public key of the Seed.
 
 The `state_init` data should be constructed as follows:
@@ -43,7 +63,7 @@ To replenish the balance, simple message without body should be sent to the exte
 ## Authorization
 
 There are 2 types of authorization:
-- 2fa: the message is signed with the Seed and the service key.
+- 2fa: the message is signed with the Seed and the Certificate.
 - Seed: the message is signed with the Seed.
 
 ### 2FA
@@ -62,10 +82,19 @@ const signature2 = sign(dataToSign.hash(), seedPrivateKey);
 
 const body = beginCell()
     .storeBuffer(signature1)
+    .storeRef(certificate)
     .storeRef(beginCell().storeBuffer(signature2))
     .storeSlice(dataToSign.beginParse());
 
 return body.endCell();
+```
+
+Certificate should be constructed as follows:
+```typescript
+const certificateData = beginCell().storeUint(validUntil, 64).storeUint(servicePublicKey, 256).endCell();
+const signature = sign(certificateData.hash(), rootPrivateKey);
+
+const certificate = beginCell().storeSlice(certificateData.beginParse()).storeBuffer(signature).endCell();
 ```
 
 ### Seed Authorization
@@ -91,6 +120,7 @@ return body.endCell();
 ```tlb
 signed_2fa_external#_ 
     service_signature:bits512 
+    ref_with_certificate:^Certificate
     ref_with_seed_signature:^[seed_signature:bits512] 
     op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
     = ExternalMsgBody;
@@ -166,7 +196,7 @@ This method is used to cancel `delegation`. If the current state is `delegation`
 ### TL-B schemes
 
 ```tl-b
-install#43563174 service_pubkey:uint256 seed_pubkey:uint256 device_pubkeys:(Dict uint32 uint256) = InternalMessage;
+install#43563174 root_pubkey:uint256 seed_pubkey:uint256 device_pubkeys:(Dict uint32 uint256) = InternalMessage;
 
 send_actions#b15f2c8c msg:^Cell mode:uint8 = ExternalMessage;
 remove_extension#9d8084d6 = ExternalMessage;
@@ -178,7 +208,7 @@ cancel_delegation#de82b501 = ExternalMessage;
 
 - `int get_seqno()` - returns the current seqno.
 - `int get_wallet_addr()` - returns the wallet address.
-- `int get_service_pubkey()` - returns the service public key.
+- `int get_root_pubkey()` - returns the root public key.
 - `int get_seed_pubkey()` - returns the seed public key.
 - `(int, int, tuple) get_delegation_state()` - returns the delegation state. First parameter is the `state tag`. 
 Second parameter is the `blocked_until`. Third parameter is the state params.

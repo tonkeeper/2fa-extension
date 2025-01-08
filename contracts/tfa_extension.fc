@@ -15,7 +15,8 @@ const config::RETRAY_TIMEOUT = ONE_DAY;
 
 const err::extension_already_installed = 160;
 const err::sender_is_not_owner         = 161;
-const err::wrong_service_signature     = 162;
+const err::wrong_certificate_signature = 162;
+const err::wrong_root_ca_signature     = 163;
 const err::wrong_seed_signature        = 164;
 const err::wrong_seqno                 = 165;
 const err::expired                     = 166;
@@ -29,6 +30,9 @@ const CONFIRM_REMOVAL_GAS_USAGE = 2755;
 const int GAS_WALLET_PROCESS_BASE = 3545;
 const int GAS_WALLET_PROCESS_PER_ACTION = 717;
 const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
+
+slice get_last_bits(slice s, int n) asm "SDCUTLAST";
+slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
 
 (int, slice, int, int, int, slice) load_data() inline {
     var ds = get_data().begin_parse();
@@ -47,14 +51,14 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
 ;;       they will not be stored in the state.
 () save_state_after_install(
     slice wallet,
-    int service_pubkey,
+    int root_ca_pubkey,
     int seed_pubkey
 ) impure inline {
     set_data(
         begin_cell()
             .store_uint(1, 32)
             .store_slice(wallet)
-            .store_uint(service_pubkey, 256)
+            .store_uint(root_ca_pubkey, 256)
             .store_uint(seed_pubkey, 256)
             .store_uint(0, 1 + 64)
             .end_cell()
@@ -64,7 +68,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
 () save_state(
     int seqno,
     slice wallet,
-    int service_pubkey,
+    int root_ca_pubkey,
     int seed_pubkey,
     int state_,
     slice state
@@ -73,7 +77,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
         begin_cell()
             .store_uint(seqno, 32)
             .store_slice(wallet)
-            .store_uint(service_pubkey, 256)
+            .store_uint(root_ca_pubkey, 256)
             .store_uint(seed_pubkey, 256)
             .store_uint(state_, 1)
             .store_slice(state)
@@ -96,7 +100,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
     (
         int seqno,
         slice wallet_addr,
-        int service_pubkey,
+        int root_ca_pubkey,
         int seed_pubkey,
         int state,
         slice rest_state
@@ -106,12 +110,12 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
         throw_unless(err::extension_already_installed, seqno == 0);
         throw_unless(err::sender_is_not_owner, equal_slices(sender, wallet_addr));
 
-        int new_service_pubkey = in_msg_body~load_uint(256);
+        int new_root_ca_pubkey = in_msg_body~load_uint(256);
         int new_seed_pubkey = in_msg_body~load_uint(256);
 
         save_state_after_install(
             sender,
-            new_service_pubkey,
+            new_root_ca_pubkey,
             new_seed_pubkey
         );
 
@@ -157,7 +161,26 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
     throw(0xffff);
 }
 
-(slice, ()) check_2fa(slice cs, slice service_signature, int service_pubkey, int seed_pubkey, int stored_seqno) impure {
+(slice, ()) check_2fa(slice cs, slice service_signature, int root_ca_pubkey, int seed_pubkey, int stored_seqno) impure {
+    slice certificate_info = cs~load_ref().begin_parse();
+    slice certificate_signature = certificate_info.get_last_bits(512);
+    certificate_info = certificate_info.remove_last_bits(512);
+
+    slice certificate_info_cs = certificate_info;
+    int certificate_valid_until = certificate_info_cs~load_uint(64);
+
+    int certificate_pubkey = certificate_info_cs~load_uint(256);
+    certificate_info_cs.end_parse();
+
+    throw_unless(
+        err::wrong_root_ca_signature,
+        check_signature(slice_hash(certificate_info), certificate_signature, root_ca_pubkey)
+    );
+    throw_unless(
+        err::expired,
+        certificate_valid_until >= now()
+    );
+
     slice seed_info = cs~load_ref().begin_parse();
     slice seed_signature = seed_info~load_bits(512);
     seed_info.end_parse();
@@ -169,8 +192,8 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
         check_signature(root_hash, seed_signature, seed_pubkey)
     );
     throw_unless(
-        err::wrong_service_signature,
-        check_signature(root_hash, service_signature, service_pubkey)
+        err::wrong_certificate_signature,
+        check_signature(root_hash, service_signature, certificate_pubkey)
     );
 
     ;; op code
@@ -211,14 +234,14 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
     slice immutable_tail = ds;
 
     slice wallet_addr = ds~load_msg_addr();
-    int service_pubkey = ds~load_uint(256);
+    int root_ca_pubkey = ds~load_uint(256);
     int seed_pubkey = ds~load_uint(256);
     int delegation_started? = ds~load_uint(1);
     slice rest_state = ds;
 
     if (op == op::send_actions) {
         throw_if(err::recovery_in_progress, delegation_started?);
-        in_msg~check_2fa(signature1, service_pubkey, seed_pubkey, seqno);
+        in_msg~check_2fa(signature1, root_ca_pubkey, seed_pubkey, seqno);
         accept_message();
 
         set_data(
@@ -239,7 +262,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
     }
 
     if (op == op::remove_extension) {
-        in_msg~check_2fa(signature1, service_pubkey, seed_pubkey, seqno);
+        in_msg~check_2fa(signature1, root_ca_pubkey, seed_pubkey, seqno);
         in_msg.end_parse();
 
         throw_if(err::recovery_in_progress, delegation_started?);
@@ -314,7 +337,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
             save_state(
                 seqno + 1,
                 wallet_addr,
-                service_pubkey,
+                root_ca_pubkey,
                 seed_pubkey,
                 1,
                 new_recovery_state
@@ -334,7 +357,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
             save_state(
                 seqno + 1,
                 wallet_addr,
-                service_pubkey,
+                root_ca_pubkey,
                 seed_pubkey,
                 0,
                 begin_cell().store_uint(0, 64).end_cell().begin_parse()
@@ -407,7 +430,7 @@ const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
         save_state(
             seqno + 1,
             wallet_addr,
-            service_pubkey,
+            root_ca_pubkey,
             seed_pubkey,
             0,
             begin_cell().store_uint(now() + config::RETRAY_TIMEOUT, 64).end_cell().begin_parse()
@@ -427,7 +450,7 @@ int get_seqno() method_id {
     (
         int seqno,
         slice wallet_addr,
-        int service_pubkey,
+        int root_ca_pubkey,
         int seed_pubkey,
         int delegation_started?,
         slice rest_state
@@ -439,7 +462,7 @@ slice get_wallet_addr() method_id {
     (
         int seqno,
         slice wallet_addr,
-        int service_pubkey,
+        int root_ca_pubkey,
         int seed_pubkey,
         int delegation_started?,
         slice rest_state
@@ -447,16 +470,16 @@ slice get_wallet_addr() method_id {
     return wallet_addr;
 }
 
-int get_service_pubkey() method_id {
+int get_root_pubkey() method_id {
     (
         int seqno,
         slice wallet_addr,
-        int service_pubkey,
+        int root_ca_pubkey,
         int seed_pubkey,
         int delegation_started?,
         slice rest_state
     ) = load_data();
-    return service_pubkey;
+    return root_ca_pubkey;
 }
 
 int get_seed_pubkey() method_id {

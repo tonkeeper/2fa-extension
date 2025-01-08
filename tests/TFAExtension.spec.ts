@@ -13,7 +13,7 @@ import {
     TransactionDescription,
     TransactionDescriptionGeneric,
 } from '@ton/core';
-import { TFAExtension } from '../wrappers/TFAExtension';
+import { Certificate, TFAExtension } from '../wrappers/TFAExtension';
 import '@ton/test-utils';
 import { compile } from '@ton/blueprint';
 import { getSecureRandomBytes, KeyPair, keyPairFromSeed, sign } from '@ton/crypto';
@@ -36,7 +36,8 @@ describe('TFAExtension', () => {
     let tFAExtension: SandboxContract<TFAExtension>;
     let walletV5: SandboxContract<WalletContractV5R1>;
 
-    let serviceKeypair: KeyPair;
+    let rootCAKeypair: KeyPair;
+    let certificate: Certificate;
     let seedKeypair: KeyPair;
     let walletKeypair: KeyPair;
 
@@ -46,7 +47,9 @@ describe('TFAExtension', () => {
         blockchain = await Blockchain.create();
         deployer = await blockchain.treasury('deployer');
 
-        serviceKeypair = await randomKeypair();
+        rootCAKeypair = await randomKeypair();
+        certificate = await makeCertificate({ rootCAKeypair });
+
         seedKeypair = await randomKeypair();
         walletKeypair = await randomKeypair();
 
@@ -75,7 +78,7 @@ describe('TFAExtension', () => {
 
         const sender = (await walletV5.sender(walletKeypair.secretKey)).result;
         const deployResult = await tFAExtension.sendDeploy(sender, toNano('1.5'), {
-            servicePubkey: bufferToBigInt(serviceKeypair.publicKey),
+            rootCAPubkey: bufferToBigInt(rootCAKeypair.publicKey),
             seedPubkey: bufferToBigInt(seedKeypair.publicKey),
         });
 
@@ -111,7 +114,7 @@ describe('TFAExtension', () => {
     it('should deploy', async () => {
         expect(await tFAExtension.getSeqno()).toEqual(1);
         expect(await tFAExtension.getWalletAddr()).toEqualAddress(walletV5.address);
-        expect(await tFAExtension.getServicePubkey()).toEqual(bufferToBigInt(serviceKeypair.publicKey));
+        expect(await tFAExtension.getRootPubkey()).toEqual(bufferToBigInt(rootCAKeypair.publicKey));
         expect(await tFAExtension.getSeedPubkey()).toEqual(bufferToBigInt(seedKeypair.publicKey));
         const delegationState = await tFAExtension.getDelegationState();
         expect(delegationState.type).toEqual('none');
@@ -141,7 +144,7 @@ describe('TFAExtension', () => {
         async function testSendActions(
             prefix: string,
             opts: {
-                servicePrivateKey?: Buffer;
+                cert?: Certificate;
                 seedPrivateKey?: Buffer;
                 actions: OutActionWalletV5[];
                 refill?: boolean;
@@ -151,7 +154,7 @@ describe('TFAExtension', () => {
             },
         ) {
             let {
-                servicePrivateKey = serviceKeypair.secretKey,
+                cert = certificate,
                 seedPrivateKey = seedKeypair.secretKey,
                 actions = [],
                 refill = false,
@@ -192,7 +195,7 @@ describe('TFAExtension', () => {
                 body: request,
             });
             const res1 = await tFAExtension.sendSendActions({
-                servicePrivateKey: servicePrivateKey,
+                certificate: cert,
                 seedPrivateKey: seedPrivateKey,
                 seqno,
                 validUntil,
@@ -304,10 +307,22 @@ describe('TFAExtension', () => {
             });
         });
 
-        it('should not send actions with wrong servicePrivateKey', async () => {
+        it('should not send actions with wrong certificate', async () => {
             await shouldFail(
-                testSendActions('Wrong Service Private Key', {
-                    servicePrivateKey: (await randomKeypair()).secretKey,
+                testSendActions('Wrong Certificate Signature', {
+                    cert: {
+                        ...certificate,
+                        keypair: await randomKeypair(),
+                    },
+                    actions: [],
+                }),
+            );
+        });
+
+        it('should not send actions with expired certificate', async () => {
+            await shouldFail(
+                testSendActions('Expired Certificate', {
+                    cert: await makeCertificate({ rootCAKeypair, validUntil: Math.floor(Date.now() / 1000) - 1 }),
                     actions: [],
                 }),
             );
@@ -358,20 +373,20 @@ describe('TFAExtension', () => {
 
     describe('remove extension', () => {
         async function destructTest(opts: {
-            servicePrivateKey?: Buffer;
+            cert?: Certificate;
             seedPrivateKey?: Buffer;
             validUntil?: number;
             seqno?: number;
         }): Promise<SendMessageResult> {
             let {
-                servicePrivateKey = serviceKeypair.secretKey,
+                cert = certificate,
                 seedPrivateKey = seedKeypair.secretKey,
                 validUntil = Math.floor(Date.now() / 1000) + 180,
                 seqno = await tFAExtension.getSeqno(),
             } = opts;
 
             const res = await tFAExtension.sendRemoveExtension({
-                servicePrivateKey,
+                certificate: cert,
                 seedPrivateKey,
                 seqno,
                 validUntil,
@@ -408,9 +423,8 @@ describe('TFAExtension', () => {
             expect(confirmationGasUsed).toEqual(2729n);
         });
 
-        it('should not destruct with wrong servicePrivateKey', async () => {
-            const randomNewKeypair = await randomKeypair();
-            await shouldFail(destructTest({ servicePrivateKey: randomNewKeypair.secretKey }));
+        it('should not destruct with wrong certificate', async () => {
+            await shouldFail(destructTest({ cert: { ...certificate, keypair: await randomKeypair() } }));
         });
 
         it('should not destruct with wrong seedPrivateKey', async () => {
@@ -707,7 +721,7 @@ describe('TFAExtension', () => {
             });
 
             const res = await tFAExtension.sendSendActions({
-                servicePrivateKey: serviceKeypair.secretKey,
+                certificate: certificate,
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
                 msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
@@ -833,7 +847,7 @@ describe('TFAExtension', () => {
                 body: actions,
             });
             const res = await tFAExtension.sendSendActions({
-                servicePrivateKey: serviceKeypair.secretKey,
+                certificate: certificate,
                 seedPrivateKey: seedKeypair.secretKey,
                 seqno: 1,
                 msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
@@ -879,4 +893,19 @@ function bufferToBigInt(buffer: Buffer) {
 
 async function randomKeypair() {
     return keyPairFromSeed(await getSecureRandomBytes(32));
+}
+
+async function makeCertificate(opts: { rootCAKeypair: KeyPair; validUntil?: number }): Promise<Certificate> {
+    const { rootCAKeypair, validUntil = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 } = opts;
+
+    const certKeypair = await randomKeypair();
+
+    return {
+        keypair: certKeypair,
+        validUntil,
+        signature: sign(
+            beginCell().storeUint(validUntil, 64).storeBuffer(certKeypair.publicKey).endCell().hash(),
+            rootCAKeypair.secretKey,
+        ),
+    };
 }
