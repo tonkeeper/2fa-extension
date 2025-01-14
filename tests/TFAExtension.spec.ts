@@ -151,6 +151,7 @@ describe('TFAExtension', () => {
                 logGasUsage?: boolean;
                 validUntil?: number;
                 seqno?: number;
+                external?: boolean;
             },
         ) {
             let {
@@ -161,6 +162,7 @@ describe('TFAExtension', () => {
                 logGasUsage = false,
                 validUntil = Math.floor(Date.now() / 1000) + 180,
                 seqno = await tFAExtension.getSeqno(),
+                external = true,
             } = opts;
             const originalActions = actions.slice();
             if (refill) {
@@ -194,14 +196,27 @@ describe('TFAExtension', () => {
                 value: txFees,
                 body: request,
             });
-            const res1 = await tFAExtension.sendSendActions({
-                certificate: cert,
-                seedPrivateKey: seedPrivateKey,
-                seqno,
-                validUntil,
-                msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
-                sendMode: SendMode.NONE,
-            });
+            let res1: SendMessageResult;
+
+            if (external) {
+                res1 = await tFAExtension.sendSendActions({
+                    certificate: cert,
+                    seedPrivateKey: seedPrivateKey,
+                    seqno,
+                    validUntil,
+                    msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
+                    sendMode: SendMode.NONE,
+                });
+            } else {
+                res1 = await tFAExtension.sendInternalSendActions(deployer.getSender(), toNano('0.05'), {
+                    certificate: cert,
+                    seedPrivateKey: seedPrivateKey,
+                    seqno,
+                    validUntil,
+                    msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
+                    sendMode: SendMode.NONE,
+                });
+            }
 
             let s = '';
             if (logGasUsage) {
@@ -296,6 +311,35 @@ describe('TFAExtension', () => {
                 from: walletV5.address,
                 to: tFAExtension.address,
                 value: toNano('1.0'),
+                success: true,
+            });
+
+            expect(res.transactions).toHaveTransaction({
+                from: walletV5.address,
+                to: deployer.address,
+                value: toNano('0.1'),
+                success: true,
+            });
+        });
+
+        it('should send actions (internal)', async () => {
+            const res = await testSendActions('Simple Transfer', {
+                actions: [
+                    {
+                        type: 'sendMsg',
+                        mode: SendMode.PAY_GAS_SEPARATELY,
+                        outMsg: internal({
+                            to: deployer.address,
+                            value: toNano('0.1'),
+                        }),
+                    },
+                ],
+                external: false,
+            });
+
+            expect(res.transactions).toHaveTransaction({
+                from: deployer.address,
+                to: tFAExtension.address,
                 success: true,
             });
 
@@ -420,7 +464,7 @@ describe('TFAExtension', () => {
                 (res.transactions[2].description as TransactionDescriptionGeneric).computePhase as TransactionComputeVm
             ).gasUsed;
 
-            expect(confirmationGasUsed).toEqual(2729n);
+            expect(confirmationGasUsed).toEqual(3042n);
         });
 
         it('should not destruct with wrong certificate', async () => {

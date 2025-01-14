@@ -31,6 +31,7 @@ export function tFAPluginConfigToCell(config: TFAExtensionConfig): Cell {
 
 export enum OpCode {
     INSTALL = 0x43563174,
+    INTERNAL_SIGNED = 0x53684037,
     SEND_ACTIONS = 0xb15f2c8c,
     REMOVE_EXTENSION = 0x9d8084d6,
     DELEGATION = 0x23d9c15c,
@@ -83,6 +84,22 @@ export class TFAExtension implements Contract {
             beginCell().storeRef(opts.msg).storeUint(opts.sendMode, 8),
         );
         await this.sendExternal(provider, body);
+    }
+
+    async sendInternalSendActions(provider: ContractProvider, via: Sender, value: bigint, opts: SendActionsOpts) {
+        const body = packTFABody(
+            opts.certificate,
+            opts.seedPrivateKey,
+            opts.seqno,
+            opts.validUntil || Math.floor(Date.now() / 1000) + 120,
+            OpCode.SEND_ACTIONS,
+            beginCell().storeRef(opts.msg).storeUint(opts.sendMode, 8),
+        );
+        await provider.internal(via, {
+            value,
+            sendMode: SendMode.NONE,
+            body: beginCell().storeUint(OpCode.INTERNAL_SIGNED, 32).storeSlice(body.beginParse()).endCell(),
+        });
     }
 
     async sendRemoveExtension(provider: ContractProvider, opts: RemoveExtOpts) {

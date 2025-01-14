@@ -2,6 +2,7 @@
 #include "imports/shared.fc";
 
 const op::install =              0x43563174;
+const op::internal_signed =      0x53684037;
 const op::confirm_removal =      0xc2d7f22b;
 
 const op::send_actions =         0xb15f2c8c;
@@ -24,9 +25,10 @@ const err::recovery_in_progress        = 167;
 const err::action_timeout              = 170;
 const err::mismatched_data             = 171;
 const err::no_delegation_initiated     = 174;
+const err::only_send_actions_supported = 175;
 
 const INSTALL_PLUGIN_GAS_USAGE = 4128;
-const CONFIRM_REMOVAL_GAS_USAGE = 2755;
+const CONFIRM_REMOVAL_GAS_USAGE = 3042;
 const int GAS_WALLET_PROCESS_BASE = 3545;
 const int GAS_WALLET_PROCESS_PER_ACTION = 717;
 const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
@@ -83,82 +85,6 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
             .store_slice(state)
             .end_cell()
     );
-}
-
-() recv_internal(cell in_msg_full, slice in_msg_body) impure {
-    if (slice_empty?(in_msg_body)) {
-        ;; refill
-        return ();
-    }
-
-    var cs = in_msg_full.begin_parse();
-    cs~load_uint(4); ;; skip flags
-    slice sender = cs~load_msg_addr();
-
-    int op = in_msg_body~load_uint(32);
-
-    (
-        int seqno,
-        slice wallet_addr,
-        int root_ca_pubkey,
-        int seed_pubkey,
-        int state,
-        slice rest_state
-    ) = load_data();
-
-    if (op == op::install) {
-        throw_unless(err::extension_already_installed, seqno == 0);
-        throw_unless(err::sender_is_not_owner, equal_slices(sender, wallet_addr));
-
-        int new_root_ca_pubkey = in_msg_body~load_uint(256);
-        int new_seed_pubkey = in_msg_body~load_uint(256);
-
-        save_state_after_install(
-            sender,
-            new_root_ca_pubkey,
-            new_seed_pubkey
-        );
-
-        (int wc, int _hash) = parse_std_addr(my_address());
-
-        cell msg = begin_cell()
-            .store_nonbounce_flags()
-            .store_slice(wallet_addr)
-            .store_coins(get_compute_fee(wc, GAS_WALLET_PROCESS_BASE * 3 + GAS_WALLET_PROCESS_PER_ACTION_EXT))
-            .store_ref_body(
-                begin_cell()
-                .store_uint(op::wallet::request_by_extension, 32)
-                .store_uint(0, 64)
-                .store_out_action_list(null())
-                .store_int(-1, 1)
-                .store_set_signature_auth(
-                    0,
-                    null()
-                )
-                .end_cell()
-            )
-            .end_cell();
-
-        send_raw_message(msg, PAY_FEE_SEPARATELY);
-
-        return ();
-    }
-
-    if (op == op::confirm_removal) {
-        throw_unless(err::sender_is_not_owner, equal_slices(sender, wallet_addr));
-
-        var msg = begin_cell()
-            .store_nonbounce_flags()
-            .store_slice(wallet_addr)
-            .store_coins(0)
-            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1);
-
-        send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
-
-        return ();
-    }
-
-    throw(0xffff);
 }
 
 (slice, ()) check_2fa(slice cs, slice service_signature, int root_ca_pubkey, int seed_pubkey, int stored_seqno) impure {
@@ -224,7 +150,11 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
     return (cs, ());
 }
 
-() recv_external(slice in_msg) impure {
+
+() handle_request(
+    slice in_msg,
+    int is_external?
+) impure inline {
     slice signature1 = in_msg~load_bits(512);
     int op = in_msg.preload_uint(32);
 
@@ -261,6 +191,8 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
         return ();
     }
 
+    throw_unless(err::only_send_actions_supported, is_external?);
+
     if (op == op::remove_extension) {
         in_msg~check_2fa(signature1, root_ca_pubkey, seed_pubkey, seqno);
         in_msg.end_parse();
@@ -282,9 +214,9 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
             .store_coins(
                 get_compute_fee(
                     0,
-                        GAS_WALLET_PROCESS_BASE * 3
-                        + GAS_WALLET_PROCESS_PER_ACTION * 1
-                        + GAS_WALLET_PROCESS_PER_ACTION_EXT * 2
+                    GAS_WALLET_PROCESS_BASE * 3
+                    + GAS_WALLET_PROCESS_PER_ACTION * 1
+                    + GAS_WALLET_PROCESS_PER_ACTION_EXT * 2
                 )
             )
             .store_ref_body(
@@ -302,10 +234,10 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
                     .store_set_signature_auth(
                         1,
                         begin_cell()
-                        .store_delete_ext_action(
-                            my_address(),
-                            null()
-                        ).end_cell()
+                            .store_delete_ext_action(
+                                my_address(),
+                                null()
+                            ).end_cell()
                     )
                     .end_cell()
             );
@@ -394,25 +326,25 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
                 )
                 .store_ref_body(
                     begin_cell()
-                    .store_uint(op::wallet::request_by_extension, 32)
-                    .store_uint(0, 64)
-                    .store_out_action_list(
-                        new_out_action_send_msg(
+                        .store_uint(op::wallet::request_by_extension, 32)
+                        .store_uint(0, 64)
+                        .store_out_action_list(
                             new_out_action_send_msg(
-                                begin_cell().end_cell(),
-                                IGNORE_ACTION_ERRORS,
-                                delegate_creation_msg
-                            ),
-                            IGNORE_ACTION_ERRORS + PAY_FEE_SEPARATELY,
-                            confirmation_msg
+                                new_out_action_send_msg(
+                                    begin_cell().end_cell(),
+                                    IGNORE_ACTION_ERRORS,
+                                    delegate_creation_msg
+                                ),
+                                IGNORE_ACTION_ERRORS + PAY_FEE_SEPARATELY,
+                                confirmation_msg
+                            )
                         )
-                    )
-                    .store_uint(1, 1)
-                    .store_add_ext_action_continue(
-                        new_extension_address,
-                        begin_cell().store_delete_ext_action_end(my_address()).end_cell()
-                    )
-                    .end_cell()
+                        .store_uint(1, 1)
+                        .store_add_ext_action_continue(
+                            new_extension_address,
+                            begin_cell().store_delete_ext_action_end(my_address()).end_cell()
+                        )
+                        .end_cell()
                 );
 
             send_raw_message(msg.end_cell(), PAY_FEE_SEPARATELY);
@@ -439,9 +371,92 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
         return ();
     }
 
-    ~dump(op);
+    throw(0xffff);
+}
+
+
+() recv_internal(cell in_msg_full, slice in_msg_body) impure {
+    if (slice_empty?(in_msg_body)) {
+        ;; refill
+        return ();
+    }
+
+    var cs = in_msg_full.begin_parse();
+    cs~load_uint(4); ;; skip flags
+    slice sender = cs~load_msg_addr();
+
+    int op = in_msg_body~load_uint(32);
+
+    if (op == op::internal_signed) {
+        return handle_request(in_msg_body, 0);
+    }
+
+    (
+        int seqno,
+        slice wallet_addr,
+        int root_ca_pubkey,
+        int seed_pubkey,
+        int delegation_started?,
+        slice rest_state
+    ) = load_data();
+
+    if (op == op::install) {
+        throw_unless(err::extension_already_installed, seqno == 0);
+        throw_unless(err::sender_is_not_owner, equal_slices(sender, wallet_addr));
+
+        int new_root_ca_pubkey = in_msg_body~load_uint(256);
+        int new_seed_pubkey = in_msg_body~load_uint(256);
+
+        save_state_after_install(
+            sender,
+            new_root_ca_pubkey,
+            new_seed_pubkey
+        );
+
+        (int wc, int _hash) = parse_std_addr(my_address());
+
+        cell msg = begin_cell()
+            .store_nonbounce_flags()
+            .store_slice(wallet_addr)
+            .store_coins(get_compute_fee(wc, GAS_WALLET_PROCESS_BASE * 3 + GAS_WALLET_PROCESS_PER_ACTION_EXT))
+            .store_ref_body(
+                begin_cell()
+                .store_uint(op::wallet::request_by_extension, 32)
+                .store_uint(0, 64)
+                .store_out_action_list(null())
+                .store_int(-1, 1)
+                .store_set_signature_auth(
+                    0,
+                    null()
+                )
+                .end_cell()
+            )
+            .end_cell();
+
+        send_raw_message(msg, PAY_FEE_SEPARATELY);
+
+        return ();
+    }
+
+    if (op == op::confirm_removal) {
+        throw_unless(err::sender_is_not_owner, equal_slices(sender, wallet_addr));
+
+        var msg = begin_cell()
+            .store_nonbounce_flags()
+            .store_slice(wallet_addr)
+            .store_coins(0)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1);
+
+        send_raw_message(msg.end_cell(), CARRY_CONTRACT_BALANCE + DESTROY_IF_BALANCE_ZERO);
+
+        return ();
+    }
 
     throw(0xffff);
+}
+
+() recv_external(slice in_msg) impure {
+    return handle_request(in_msg, 1);
 }
 
 ;; GET METHODS

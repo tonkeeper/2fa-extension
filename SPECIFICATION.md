@@ -97,6 +97,11 @@ const signature = sign(certificateData.hash(), rootPrivateKey);
 const certificate = beginCell().storeSlice(certificateData.beginParse()).storeBuffer(signature).endCell();
 ```
 
+### Internal 2FA Authorization
+
+To authorize a message with 2FA using internal message, the [2FA](#2FA) authorization scheme should be used, but
+with the `0x53684037` op code.
+
 ### Seed Authorization
 
 To authorize a message with Seed, the following scheme of the message should be used:
@@ -126,6 +131,13 @@ signed_2fa_external#_
     = ExternalMsgBody;
 signed_seed_external#_
     seed_signature:bits512
+    op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
+    = ExternalMsgBody;
+    
+signed_2fa_internal#53684037 
+    service_signature:bits512 
+    ref_with_certificate:^Certificate
+    ref_with_seed_signature:^[seed_signature:bits512] 
     op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
     = ExternalMsgBody;
 ```
