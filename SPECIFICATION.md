@@ -6,26 +6,23 @@
 
 Root key is a key that is used to sign Certificate by the Tonkeeper.
 
-### **Service Key**
-
-The service key is stored on the Tonkeeper backend and is required to sign any message sent to the extension. Any
-message signed with the Seed must be signed with the SK as well. The SK is passed to the extension in the Certificate.
-Extension uses Root public key to verify the SK.
-
 ### **Certificate**
 
 Certificate is a Cell that contains following data:
 
 - `valid_until` - the timestamp until the certificate is valid.
-- `service_pubkey` - the public key of the Certificate.
-- `signature` - the signature of the `[valid_until, service_pubkey]` by the Root key.
+- `pubkey` - the public key of the Certificate.
+- `signature` - the signature of the `[valid_until, pubkey]` by the Root key.
 
 TL-B:
 
 ```tlb
-certificate_data$_ valid_until:uint64 service_pubkey:uint256 = CertificateData;
+certificate_data$_ valid_until:uint64 pubkey:uint256 = CertificateData;
 certificate$_ data:CertificateData signature:bits512 = Certificate;
 ```
+
+The certificate private key is stored on the Tonkeeper backend and is required to sign any message sent to the extension. Any
+message signed with the Seed must be signed with the Certificate as well. Extension uses Root public key to verify the Certificate.
 
 ## Installing extension
 
@@ -77,7 +74,7 @@ const dataToSign = beginCell()
     .storeUint(validUntil, 64)
     .storeBuilder(payload) // payload of the method
     .endCell();
-const signature1 = sign(dataToSign.hash(), servicePrivateKey);
+const signature1 = sign(dataToSign.hash(), certificatePrivateKey);
 const signature2 = sign(dataToSign.hash(), seedPrivateKey);
 
 const body = beginCell()
@@ -91,7 +88,7 @@ return body.endCell();
 
 Certificate should be constructed as follows:
 ```typescript
-const certificateData = beginCell().storeUint(validUntil, 64).storeUint(servicePublicKey, 256).endCell();
+const certificateData = beginCell().storeUint(validUntil, 64).storeUint(certificatePublicKey, 256).endCell();
 const signature = sign(certificateData.hash(), rootPrivateKey);
 
 const certificate = beginCell().storeSlice(certificateData.beginParse()).storeBuffer(signature).endCell();
@@ -124,7 +121,7 @@ return body.endCell();
 
 ```tlb
 signed_2fa_external#_ 
-    service_signature:bits512 
+    certificate_signature:bits512 
     ref_with_certificate:^Certificate
     ref_with_seed_signature:^[seed_signature:bits512] 
     op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
@@ -135,7 +132,7 @@ signed_seed_external#_
     = ExternalMsgBody;
     
 signed_2fa_internal#53684037 
-    service_signature:bits512 
+    certificate_signature:bits512 
     ref_with_certificate:^Certificate
     ref_with_seed_signature:^[seed_signature:bits512] 
     op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
