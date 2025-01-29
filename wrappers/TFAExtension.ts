@@ -271,10 +271,10 @@ export function packTFABody(
         .endCell();
 
     const body = beginCell()
-        .storeBuffer(signature1)
         .storeRef(cert)
         .storeRef(beginCell().storeBuffer(signature2))
-        .storeSlice(dataToSign.beginParse());
+        .storeSlice(dataToSign.beginParse())
+        .storeBuffer(signature1);
 
     return body.endCell();
 }
@@ -294,7 +294,7 @@ export function packSeedBody(
         .endCell();
     const signature = sign(dataToSign.hash(), seedPrivateKey);
 
-    const body = beginCell().storeBuffer(signature).storeSlice(dataToSign.beginParse());
+    const body = beginCell().storeSlice(dataToSign.beginParse()).storeBuffer(signature);
 
     return body.endCell();
 }

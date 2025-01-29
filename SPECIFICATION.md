@@ -78,10 +78,10 @@ const signature1 = sign(dataToSign.hash(), certificatePrivateKey);
 const signature2 = sign(dataToSign.hash(), seedPrivateKey);
 
 const body = beginCell()
-    .storeBuffer(signature1)
     .storeRef(certificate)
     .storeRef(beginCell().storeBuffer(signature2))
-    .storeSlice(dataToSign.beginParse());
+    .storeSlice(dataToSign.beginParse())
+    .storeBuffer(signature1);
 
 return body.endCell();
 ```
@@ -112,7 +112,7 @@ const dataToSign = beginCell()
     .endCell();
 const signature = sign(dataToSign.hash(), seedPrivateKey);
 
-const body = beginCell().storeBuffer(signature).storeSlice(dataToSign.beginParse());
+const body = beginCell().storeSlice(dataToSign.beginParse()).storeBuffer(signature);
 
 return body.endCell();
 ```
@@ -120,22 +120,27 @@ return body.endCell();
 ### TL-B Schemes
 
 ```tlb
-signed_2fa_external#_ 
-    certificate_signature:bits512 
+send_actions$_ msg:^Cell mode:uint8 = Payload 0xb15f2c8c;
+remove_extension$_ = Payload 0x9d8084d6;
+delegation$_ new_state_init:^Cell forward_amount:Coins = Payload 0x23d9c15c;
+cancel_delegation$_ = Payload 0xde82b501;
+
+signed_2fa_external$_ 
     ref_with_certificate:^Certificate
     ref_with_seed_signature:^[seed_signature:bits512] 
-    op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
+    op_code:uint32 seqno:uint32 valid_until:uint64 payload:(Payload op_code)
+    certificate_signature:bits512 
     = ExternalMsgBody;
-signed_seed_external#_
+signed_seed_external$_
+    op_code:uint32 seqno:uint32 valid_until:uint64 payload:(Payload op_code)
     seed_signature:bits512
-    op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
     = ExternalMsgBody;
     
 signed_2fa_internal#53684037 
-    certificate_signature:bits512 
     ref_with_certificate:^Certificate
     ref_with_seed_signature:^[seed_signature:bits512] 
-    op_code:uint32 seqno:uint32 valid_until:uint64 payload:Cell
+    op_code:uint32 seqno:uint32 valid_until:uint64 payload:(Payload op_code)
+    certificate_signature:bits512 
     = ExternalMsgBody;
 ```
 
@@ -201,17 +206,6 @@ cancel_delegation#de82b501 = ExternalMessage;
 
 This method is used to cancel `delegation`. If the current state is `delegation`, it resets to the
 `none` state.
-
-### TL-B schemes
-
-```tl-b
-install#43563174 root_pubkey:uint256 seed_pubkey:uint256 device_pubkeys:(Dict uint32 uint256) = InternalMessage;
-
-send_actions#b15f2c8c msg:^Cell mode:uint8 = ExternalMessage;
-remove_extension#9d8084d6 = ExternalMessage;
-delegation#23d9c15c new_state_init:^Cell forward_amount:Coins = ExternalMessage;
-cancel_delegation#de82b501 = ExternalMessage;
-```
 
 ## Get Methods
 

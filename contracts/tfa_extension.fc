@@ -155,7 +155,9 @@ slice remove_last_bits(slice s, int n) asm "SDSKIPLAST";
     slice in_msg,
     int is_external?
 ) impure inline {
-    slice signature1 = in_msg~load_bits(512);
+    slice signature1 = in_msg.get_last_bits(512);
+    in_msg = in_msg.remove_last_bits(512);
+
     int op = in_msg.preload_uint(32);
 
     var ds = get_data().begin_parse();
