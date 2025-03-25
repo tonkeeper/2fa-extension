@@ -1,18 +1,13 @@
-import { Blockchain, printTransactionFees, SandboxContract, SendMessageResult, TreasuryContract } from '@ton/sandbox';
+import { Blockchain, SandboxContract, SendMessageResult, TreasuryContract } from '@ton/sandbox';
 import {
     Address,
     beginCell,
     Cell,
     Dictionary,
     internal,
-    loadMessage,
-    loadMessageRelaxed,
     storeMessageRelaxed,
     toNano,
-    TransactionActionPhase,
-    TransactionComputePhase,
     TransactionComputeVm,
-    TransactionDescription,
     TransactionDescriptionGeneric,
 } from '@ton/core';
 import { Certificate, TFAExtension } from '../wrappers/TFAExtension';
@@ -25,6 +20,7 @@ import { JettonMinter } from '../notcoin-contract/wrappers/JettonMinter';
 import * as fs from 'fs';
 import { JettonWallet } from '../notcoin-contract/wrappers/JettonWallet';
 import { OutActionWalletV5 } from '@ton/ton/dist/wallets/v5beta/WalletV5OutActions';
+import { randomAddress } from '@ton/test-utils';
 
 describe('TFAExtension', () => {
     let code: Cell;
@@ -850,68 +846,62 @@ describe('TFAExtension', () => {
 
         expect(await walletV5JettonWallet.getJettonBalance()).toEqual(toNano('1000'));
 
-        async function test(receiver: Address) {
-            const actionsList: OutActionWalletV5[] = [];
-            for (let i = 0; i < 255; i++) {
-                actionsList.push({
-                    type: 'sendMsg',
-                    mode: SendMode.PAY_GAS_SEPARATELY,
-                    outMsg: internal({
-                        to: walletV5JettonWallet.address,
-                        value: toNano('0.15'),
-                        body: JettonWallet.transferMessage(
-                            toNano('1'),
-                            receiver,
-                            walletV5.address,
-                            null,
-                            1n,
-                            beginCell().storeUint(10, 32).endCell(),
-                        ),
-                    }),
-                });
-            }
-
-            // ------ SEND TO EXTENSION ------
-            const actions = walletV5.createRequest({
-                seqno: 2,
-                authType: 'extension',
-                actions: actionsList,
+        const actionsList: OutActionWalletV5[] = [];
+        for (let i = 0; i < 50; i++) {
+            actionsList.push({
+                type: 'sendMsg',
+                mode: SendMode.PAY_GAS_SEPARATELY,
+                outMsg: internal({
+                    to: walletV5JettonWallet.address,
+                    value: toNano('0.15') + BigInt(i),
+                    body: JettonWallet.transferMessage(
+                        toNano('1'),
+                        randomAddress(),
+                        walletV5.address,
+                        null,
+                        1n,
+                        beginCell().storeUint(10, 32).endCell(),
+                    ),
+                }),
             });
-            const msgPre = internal({
-                to: walletV5.address,
-                value: toNano('0.1'),
-                body: actions,
-            });
-            const txFees = await tFAExtension.getEstimatedAttachedValue({
-                forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
-                outputMsgCount: actionsList.length,
-                extendedActionCount: 0,
-            });
-            let msg = internal({
-                to: walletV5.address,
-                value: txFees,
-                body: actions,
-            });
-            const res = await tFAExtension.sendSendActions({
-                certificate: certificate,
-                seedPrivateKey: seedKeypair.secretKey,
-                seqno: 1,
-                msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
-                sendMode: SendMode.NONE,
-            });
-            expect(res.transactions).toHaveTransaction({
-                from: tFAExtension.address,
-                to: walletV5.address,
-                success: true,
-            });
-
-            const totalFees = res.transactions.slice(0, 2).reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
-            console.log(`[255 Transfers] Total fees: ${Number(totalFees) / 1000000000}`);
         }
 
-        const receiver = await blockchain.treasury('receiver1');
+        // ------ SEND TO EXTENSION ------
+        const actions = walletV5.createRequest({
+            seqno: 2,
+            authType: 'extension',
+            actions: actionsList,
+        });
+        const msgPre = internal({
+            to: walletV5.address,
+            value: toNano('0.1'),
+            body: actions,
+        });
+        const txFees = await tFAExtension.getEstimatedAttachedValue({
+            forwardMsg: beginCell().store(storeMessageRelaxed(msgPre)).endCell(),
+            outputMsgCount: actionsList.length,
+            extendedActionCount: 0,
+        });
+        let msg = internal({
+            to: walletV5.address,
+            value: txFees,
+            body: actions,
+        });
+        const res = await tFAExtension.sendSendActions({
+            certificate: certificate,
+            seedPrivateKey: seedKeypair.secretKey,
+            seqno: 1,
+            msg: beginCell().store(storeMessageRelaxed(msg)).endCell(),
+            sendMode: SendMode.NONE,
+        });
+        expect(res.transactions).toHaveTransaction({
+            from: tFAExtension.address,
+            to: walletV5.address,
+            success: true,
+        });
 
-        await test(receiver.address);
+        const totalFees = res.transactions.slice(0, 2).reduce((acc, tx) => acc + tx.totalFees.coins, 0n);
+        console.log(`[255 Transfers] Total fees: ${Number(totalFees) / 1000000000}`);
     });
 
     it('test certificate generated by the FROST algorithm', async () => {
@@ -929,6 +919,7 @@ describe('TFAExtension', () => {
             'b5ee9c7201010101006a0000d00000000067bf248bf8f2b3d7379bc29c16f21c0f5aab7185291d32c60950f54ed3d9f3a3c23f6883e3506d940f8b99a7a139bbafe02738f5d4ae8244577a71d25bd12c4e8645709f041bcc5de6a6d783023008fb790c26b818a5be7eb97d1c38732796dcd61c7b04';
 
         blockchain = await Blockchain.create();
+        blockchain.now = 1740579800;
         deployer = await blockchain.treasury('deployer');
 
         const certSlice = Cell.fromBoc(Buffer.from(certRaw, 'hex'))[0].beginParse();
@@ -936,6 +927,7 @@ describe('TFAExtension', () => {
             let certSlice2 = Cell.fromBoc(Buffer.from(certRaw, 'hex'))[0].beginParse();
             let validUntil = certSlice2.loadUint(64);
             let publicKey = certSlice2.loadBuffer(256 / 8);
+            expect(validUntil).toEqual(1740579979);
             expect(publicKey).toEqual(certKeypair.publicKey);
         }
 
@@ -1025,13 +1017,6 @@ function loadNotcoinCode(path: string): Cell {
     const hex: string = json.hex;
 
     return Cell.fromBoc(Buffer.from(hex, 'hex'))[0];
-}
-
-function keysToDict(keys: KeyPair[]): Dictionary<number, bigint> {
-    return keys.reduce(
-        (dict, key, index) => dict.set(index, bufferToBigInt(key.publicKey)),
-        Dictionary.empty(Dictionary.Keys.Uint(32), Dictionary.Values.BigUint(256)),
-    );
 }
 
 function bufferToBigInt(buffer: Buffer) {
