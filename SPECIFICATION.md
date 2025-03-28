@@ -218,3 +218,33 @@ Second parameter is the `blocked_until`. Third parameter is the state params.
 - `int get_estimated_attached_value(cell msg, int msg_actions, int ext_actions)` - returns TON amount that should be attached
 to the message to the wallet. The first parameter is the serialized message. The second parameter is the
 number of outbound messages in the action list. The third parameter is the number of extended actions in the action list.
+
+# Known Vulnerabilities
+
+## Replay Attack when Activating Extension Twice
+
+### Vulnerability Description
+A replay attack can occur if the extension is installed twice under specific conditions:
+
+### Steps to Reproduce
+1. Install the extension as described in the [Installing Extension](#installing-extension) section.
+2. Send a transaction using the `send_actions` method via the extension.
+3. Deactivate the extension using the `remove_extension` method.
+4. Re-install the extension.
+5. An attacker can now replay the transaction from step 2, as the seqno is reset to 0.
+
+> Steps 3 and 4 must be completed within the transaction's TTL for the attack to be possible.
+
+### Impact Assessment
+While technically a vulnerability, its practical impact is minor due to several prerequisites:
+- The user must install the extension twice.
+- A transaction must be sent between the installations.
+- The re-installation must happen within the TTL of the initial transaction (typically 5 minutes).
+
+Given these conditions, the likelihood of real-world exploitation is very low.
+
+### Current Mitigation
+Backend service must prevent re-installation within a TTL window (5 minutes) after destruction. 
+Future contract versions may introduce a more sophisticated solution.
+
+> Note: This vulnerability is known and does not qualify for the Tonkeeper Bug Bounty Program.
