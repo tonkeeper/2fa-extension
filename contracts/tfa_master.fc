@@ -1,0 +1,72 @@
+#include "imports/stdlib.fc";
+
+const int GAS_EXTENSION_SEND_ACTIONS = 5155;
+const int GAS_WALLET_PROCESS_BASE = 3545;
+const int GAS_WALLET_PROCESS_PER_ACTION = 717;
+const int GAS_WALLET_PROCESS_PER_ACTION_EXT = 2000;
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+
+}
+
+int get_estimated_attached_value(
+    cell forward_msg,
+    int msg_actions,
+    int extended_actions
+) method_id {
+    int compute_fee = get_compute_fee(
+        0,
+        ;; there can be more than 1 extension in the wallet and that can increase the cost
+        ;; of processing the message
+        (GAS_WALLET_PROCESS_BASE * 3)
+        + GAS_WALLET_PROCESS_PER_ACTION * msg_actions
+        + GAS_WALLET_PROCESS_PER_ACTION_EXT * extended_actions
+    );
+    (int cells, int bits, int z, int w) = compute_data_size?(forward_msg, 10000);
+    int fwd_fees = get_forward_fee(0, bits, cells);
+    return compute_fee + fwd_fees;
+}
+
+int calculate_import_fee(cell forward_msg) {
+    (int cells, int bits, int z, int w) = compute_data_size?(forward_msg, 10000);
+
+    ;; estimated size of the external message minus forward message
+    ;; bits += 600;
+    ;; cells += 1;
+
+    ;; https://tonviewer.com/config#25
+    var configs = get_fee_cofigs();
+    var forward_fees_config = configs.slice_at(5);
+    forward_fees_config = forward_fees_config.skip_bits(8); ;; prefix 0xea
+    int lump_price = forward_fees_config~load_uint(64);
+    int bit_price = forward_fees_config~load_uint(64);
+    int cell_price = forward_fees_config~load_uint(64);
+
+    int import_fee = (lump_price + ((bit_price * bits + cell_price * cells) / 65536));
+
+    return import_fee;
+}
+
+int get_estimated_fees_on_send_actions(
+    cell forward_msg,
+    int msg_actions,
+    int extended_actions
+) method_id {
+    int import_fee = calculate_import_fee(forward_msg);
+
+    int external_msg_compute_fee = get_compute_fee(0, GAS_EXTENSION_SEND_ACTIONS);
+
+    int storage_fee = my_storage_due();
+
+    int estimated_attached_value = get_estimated_attached_value(
+        forward_msg,
+        msg_actions,
+        extended_actions
+    );
+
+    return
+    import_fee
+    + external_msg_compute_fee
+    + storage_fee
+    + estimated_attached_value;
+}

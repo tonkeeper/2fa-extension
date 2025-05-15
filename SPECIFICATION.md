@@ -219,6 +219,18 @@ Second parameter is the `blocked_until`. Third parameter is the state params.
 to the message to the wallet. The first parameter is the serialized message. The second parameter is the
 number of outbound messages in the action list. The third parameter is the number of extended actions in the action list.
 
+# 2FA Master
+
+Master contract is currently used only to call one get method as follows.
+
+Current Master Contract: https://tonviewer.com/EQC_BHePjsa-LJhws0QxqEnWtmMZFjYJPVT7gJHZ5uuibP_b
+
+## Get Methods
+
+- `int get_estimated_fees_on_send_actions(cell msg, int msg_actions, int ext_actions)` - returns the TON amount that 
+  will be used from the extension’s balance to cover blockchain fees. This value is a slight overestimate. The 
+  parameters are the same as those in `get_estimated_attached_value`.
+
 # Known Vulnerabilities
 
 ## Replay Attack when Activating Extension Twice
